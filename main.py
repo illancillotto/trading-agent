@@ -33,6 +33,9 @@ from risk_manager import RiskManager, RiskConfig
 from scheduler import TradingScheduler
 import db_utils
 
+# Coin screener
+from coin_screener import CoinScreener
+
 # ============================================================
 #                      CONFIGURAZIONE
 # ============================================================
@@ -42,6 +45,12 @@ CONFIG = {
     "TESTNET": True,
     "TICKERS": ["BTC", "ETH", "SOL"],
     "CYCLE_INTERVAL_MINUTES": 3,
+
+    # Coin Screening
+    "SCREENING_ENABLED": False,  # Set to True to enable dynamic coin selection
+    "TOP_N_COINS": 5,
+    "REBALANCE_DAY": "sunday",
+    "FALLBACK_TICKERS": ["BTC", "ETH", "SOL"],  # Used if screening fails or disabled
 
     # Risk Management
     "MAX_DAILY_LOSS_USD": 500.0,
@@ -74,6 +83,7 @@ class BotState:
     def __init__(self):
         self.trader: Optional[HyperLiquidTrader] = None
         self.risk_manager: Optional[RiskManager] = None
+        self.screener: Optional[CoinScreener] = None
         self.initialized: bool = False
         self.last_error: Optional[str] = None
 
@@ -108,6 +118,19 @@ class BotState:
             )
             self.risk_manager = RiskManager(config=risk_config)
             logger.info("✅ Risk Manager inizializzato")
+
+            # Coin Screener (se abilitato)
+            if CONFIG["SCREENING_ENABLED"]:
+                self.screener = CoinScreener(
+                    testnet=CONFIG["TESTNET"],
+                    coingecko_api_key=os.getenv("COINGECKO_API_KEY"),
+                    top_n=CONFIG["TOP_N_COINS"]
+                )
+                logger.info("✅ Coin Screener inizializzato")
+
+                # Run migration for screener tables
+                from coin_screener.db_migration import run_migration
+                run_migration(db_utils.get_connection().__enter__())
 
             self.initialized = True
             return True
@@ -145,6 +168,7 @@ def trading_cycle() -> None:
 
     trader = bot_state.trader
     risk_manager = bot_state.risk_manager
+    screener = bot_state.screener
 
     # Variabili per error logging
     indicators_json = []
@@ -156,14 +180,47 @@ def trading_cycle() -> None:
 
     try:
         # ========================================
+        # 0. SELEZIONE COIN (se screening abilitato)
+        # ========================================
+        if CONFIG["SCREENING_ENABLED"] and screener:
+            try:
+                # Check se serve rebalance completo
+                if screener.should_rebalance():
+                    logger.info("🔄 Rebalance settimanale: eseguo screening completo...")
+                    result = screener.run_full_screening()
+
+                    # Log su database
+                    from coin_screener.db_utils import log_screening_result
+                    with db_utils.get_connection() as conn:
+                        log_screening_result(conn, result)
+                else:
+                    # Update giornaliero
+                    logger.info("📊 Update giornaliero scores...")
+                    result = screener.update_scores()
+
+                # Ottieni top coins
+                selected_coins = screener.get_selected_coins(top_n=CONFIG["TOP_N_COINS"])
+                tickers = [coin.symbol for coin in selected_coins]
+
+                logger.info(f"🎯 Trading su: {', '.join(tickers)}")
+
+            except Exception as e:
+                logger.error(f"❌ Errore screening: {e}", exc_info=True)
+                logger.info(f"📋 Uso fallback tickers: {CONFIG['FALLBACK_TICKERS']}")
+                tickers = CONFIG["FALLBACK_TICKERS"]
+        else:
+            # Screening disabilitato, usa CONFIG["TICKERS"]
+            tickers = CONFIG["TICKERS"]
+
+        # ========================================
         # 1. FETCH DATI DI MERCATO
         # ========================================
         logger.info("📡 Recupero dati di mercato...")
 
         # Indicatori tecnici
         try:
-            indicators_txt, indicators_json = analyze_multiple_tickers(CONFIG["TICKERS"])
-            logger.info(f"✅ Indicatori tecnici per {len(CONFIG['TICKERS'])} ticker")
+            indicators_txt, indicators_json = analyze_multiple_tickers(tickers)
+            logger.info(f"✅ Indicatori tecnici per {len(tickers)} ticker")
         except Exception as e:
             logger.warning(f"⚠️ Errore indicatori: {e}")
             indicators_txt = "Dati indicatori non disponibili"
@@ -214,7 +271,7 @@ def trading_cycle() -> None:
         # 3. CHECK SL/TP POSIZIONI ESISTENTI
         # ========================================
         if open_positions:
-            current_prices = trader.get_current_prices(CONFIG["TICKERS"])
+            current_prices = trader.get_current_prices(tickers)
             positions_to_close = risk_manager.check_positions(current_prices)
 
             for close_info in positions_to_close:
