@@ -24,6 +24,9 @@ dependencies = [
     "eth-account",
     "numpy",
     "python-telegram-bot>=20.0",
+    "statsmodels",
+    "torch",
+    "scikit-learn",
 ]
 
 [tool.uv]

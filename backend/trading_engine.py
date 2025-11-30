@@ -31,6 +31,7 @@ from forecaster import get_crypto_forecasts
 from hyperliquid_trader import HyperLiquidTrader
 from risk_manager import RiskManager, RiskConfig
 from scheduler import TradingScheduler
+from whalealert import fetch_whale_alerts_from_api
 import db_utils
 
 # Coin screener
@@ -212,6 +213,7 @@ def trading_cycle() -> None:
     news_txt = ""
     sentiment_json = {}
     forecasts_json = []
+    whale_alerts_list = []
     account_status = {}
     system_prompt = ""
 
@@ -294,6 +296,15 @@ def trading_cycle() -> None:
             forecasts_txt = "Forecast non disponibili"
             forecasts_json = []
 
+        # Whale Alerts
+        try:
+            whale_alerts_txt, whale_alerts_list = fetch_whale_alerts_from_api(max_alerts=10)
+            logger.info(f"✅ Whale alerts recuperati: {len(whale_alerts_list)} alert")
+        except Exception as e:
+            logger.warning(f"⚠️ Errore whale alerts: {e}")
+            whale_alerts_txt = "Whale alert non disponibili"
+            whale_alerts_list = []
+
         # ========================================
         # 2. STATO ACCOUNT
         # ========================================
@@ -353,7 +364,11 @@ def trading_cycle() -> None:
 
 <forecast>
 {forecasts_txt}
-</forecast>"""
+</forecast>
+
+<whale_alerts>
+{whale_alerts_txt}
+</whale_alerts>"""
 
         # Aggiungi stato risk manager
         risk_status = risk_manager.get_status()
@@ -459,6 +474,7 @@ Circuit breaker: {'ATTIVO' if risk_status['circuit_breaker_active'] else 'inatti
                     "news": news_txt[:500] if news_txt else None,
                     "sentiment": sentiment_json,
                     "forecasts": forecasts_json,
+                    "whale_alerts": whale_alerts_list,
                     "account": account_status
                 },
                 source="trading_cycle"

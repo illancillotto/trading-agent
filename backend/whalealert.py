@@ -1,6 +1,12 @@
 import requests
 from datetime import datetime
 import json
+import logging
+import csv
+from io import StringIO
+from typing import Tuple, List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 def get_whale_alerts():
     """
@@ -105,6 +111,142 @@ def format_whale_alerts_to_string():
     except Exception as e:
         return f"Errore: {e}"
 
+def fetch_whale_alerts_from_api(max_alerts: int = 10) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    Recupera i whale alerts dall'API pubblica di whale-alert.io e li formatta per il prompt AI.
+    
+    Args:
+        max_alerts: Numero massimo di alert da includere (default: 10)
+    
+    Returns:
+        Tupla (formatted_text, alerts_list):
+        - formatted_text: Stringa markdown formattata con gli alert
+        - alerts_list: Lista di dizionari con i dati degli alert
+    """
+    url = "https://whale-alert.io/data.json?alerts=9&prices=BTC&hodl=bitcoin%2CBTC&potential_profit=bitcoin%2CBTC&average_buy_price=bitcoin%2CBTC&realized_profit=bitcoin%2CBTC&volume=bitcoin%2CBTC&news=true"
+    
+    try:
+        logger.info("📡 Recupero whale alerts da whale-alert.io...")
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        alerts_raw = data.get('alerts', [])
+        
+        if not alerts_raw:
+            logger.warning("⚠️ Nessun alert trovato nella risposta")
+            return "Whale alert non disponibili", []
+        
+        # Parsa gli alert CSV
+        alerts_parsed = []
+        for alert_str in alerts_raw:
+            if not alert_str or not isinstance(alert_str, str):
+                continue
+            
+            try:
+                # Usa csv.reader per gestire correttamente le virgole nei numeri
+                # Il formato è: timestamp,emoji,text1,text2,text3,link
+                reader = csv.reader(StringIO(alert_str))
+                parts = next(reader)
+                
+                if len(parts) >= 6:
+                    timestamp = parts[0].strip()
+                    emoji = parts[1].strip()
+                    amount = parts[2].strip().strip('"')  # quantità trasferita (text1)
+                    usd_value = parts[3].strip().strip('"')  # valore USD (text2)
+                    description = parts[4].strip().strip('"')  # descrizione (text3)
+                    link = parts[5].strip()  # link alla transazione
+                    
+                    # Estrai valore USD numerico per ordinamento (rimuovi $ e virgole)
+                    try:
+                        usd_numeric = float(usd_value.replace('$', '').replace(',', ''))
+                    except (ValueError, AttributeError):
+                        usd_numeric = 0.0
+                    
+                    alerts_parsed.append({
+                        'timestamp': timestamp,
+                        'emoji': emoji,
+                        'amount': amount,
+                        'usd_value': usd_value,
+                        'description': description,
+                        'link': link,
+                        'usd_numeric': usd_numeric
+                    })
+                else:
+                    logger.debug(f"⚠️ Alert malformato (campi insufficienti): {alert_str[:50]}...")
+                    
+            except Exception as e:
+                logger.debug(f"⚠️ Errore parsing alert: {e}, alert: {alert_str[:50]}...")
+                continue
+        
+        if not alerts_parsed:
+            logger.warning("⚠️ Nessun alert valido dopo il parsing")
+            return "Whale alert non disponibili", []
+        
+        # Ordina per valore USD decrescente (più grandi prima)
+        alerts_parsed.sort(key=lambda x: x['usd_numeric'], reverse=True)
+        
+        # Limita al numero massimo richiesto
+        alerts_parsed = alerts_parsed[:max_alerts]
+        
+        # Formatta in markdown (senza emoji per risparmiare token)
+        formatted_lines = []
+        alerts_list = []
+        
+        for alert in alerts_parsed:
+            # Normalizza formato USD: assicura che abbia il simbolo $
+            usd_value_formatted = alert['usd_value']
+            if usd_value_formatted and not usd_value_formatted.startswith('$'):
+                # Se contiene "USD" alla fine, sostituisci con $ all'inizio
+                if 'USD' in usd_value_formatted:
+                    usd_value_formatted = '$' + usd_value_formatted.replace(' USD', '').replace('USD', '').strip()
+                else:
+                    usd_value_formatted = '$' + usd_value_formatted.strip()
+            
+            # Formato senza emoji: 39,995 ETH ($119,668,458) transferred from unknown wallet to unknown wallet
+            # Link: https://whale-alert.io/transaction/ethereum/0x... (verificabile su Etherscan/Solscan/TronScan/BscScan)
+            formatted_line = f"{alert['amount']} ({usd_value_formatted}) {alert['description']}"
+            formatted_lines.append(formatted_line)
+            
+            # Estrai blockchain dal link per aggiungere nota verificabilità
+            blockchain = "blockchain"
+            if "/ethereum/" in alert['link']:
+                blockchain = "Ethereum (Etherscan)"
+            elif "/solana/" in alert['link']:
+                blockchain = "Solana (Solscan)"
+            elif "/tron/" in alert['link']:
+                blockchain = "Tron (TronScan)"
+            elif "/bsc/" in alert['link'] or "/binance/" in alert['link']:
+                blockchain = "BSC (BscScan)"
+            
+            formatted_lines.append(f"Link: {alert['link']} (verificabile su {blockchain})")
+            formatted_lines.append("")  # Linea vuota tra alert
+            
+            # Aggiungi alla lista JSON
+            alerts_list.append({
+                'amount': alert['amount'],
+                'usd_value': alert['usd_value'],
+                'description': alert['description'],
+                'link': alert['link'],
+                'timestamp': alert['timestamp']
+            })
+        
+        formatted_text = "\n".join(formatted_lines).strip()
+        
+        logger.info(f"✅ Whale alerts recuperati: {len(alerts_parsed)} alert validi")
+        return formatted_text, alerts_list
+        
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"⚠️ Errore HTTP nel recupero whale alerts: {e}")
+        return "Whale alert non disponibili", []
+    except json.JSONDecodeError as e:
+        logger.warning(f"⚠️ Errore parsing JSON whale alerts: {e}")
+        return "Whale alert non disponibili", []
+    except Exception as e:
+        logger.warning(f"⚠️ Errore generico nel recupero whale alerts: {e}", exc_info=True)
+        return "Whale alert non disponibili", []
+
+
 # Esempio di utilizzo
 if __name__ == "__main__":
     # Versione che stampa direttamente
@@ -113,3 +255,15 @@ if __name__ == "__main__":
     # O se preferisci ottenere una stringa
     # formatted_alerts = format_whale_alerts_to_string()
     # print(formatted_alerts)
+    
+    # Test nuova funzione
+    logging.basicConfig(level=logging.INFO)
+    whale_txt, whale_data = fetch_whale_alerts_from_api()
+    print("\n" + "="*80)
+    print("TEST fetch_whale_alerts_from_api():")
+    print("="*80)
+    print(whale_txt)
+    print("\n" + "="*80)
+    print(f"Alert count: {len(whale_data)}")
+    if whale_data:
+        print(f"First alert: {json.dumps(whale_data[0], indent=2)}")
