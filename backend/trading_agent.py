@@ -149,13 +149,44 @@ def previsione_trading_agent(
                 f"model: {current_config.name} ({current_config.model_id}))"
             )
 
+            # Prepara il system prompt in base alle capacità del modello
+            if current_config.supports_json_schema:
+                # Per modelli con json_schema, il prompt può essere più semplice
+                system_content = "Sei un trading AI professionale. Analizza i dati e rispondi SOLO con JSON valido secondo lo schema richiesto."
+            else:
+                # Per modelli senza json_schema (es. DeepSeek), includi lo schema nel prompt
+                system_content = """Sei un trading AI professionale. Analizza i dati e rispondi ESCLUSIVAMENTE con un JSON valido in questo formato esatto:
+
+{
+  "operation": "open|close|hold",
+  "symbol": "BTC|ETH|SOL",
+  "direction": "long|short",
+  "target_portion_of_balance": 0.1,
+  "leverage": 3,
+  "stop_loss_pct": 2.0,
+  "take_profit_pct": 5.0,
+  "reason": "Spiegazione dettagliata della decisione",
+  "confidence": 0.7
+}
+
+IMPORTANTE: 
+- operation deve essere uno di: "open", "close", "hold"
+- symbol deve essere uno di: "BTC", "ETH", "SOL"
+- direction deve essere "long" o "short"
+- target_portion_of_balance: numero tra 0.0 e 1.0
+- leverage: intero tra 1 e 10
+- stop_loss_pct: numero tra 0.5 e 10
+- take_profit_pct: numero tra 1 e 50
+- confidence: numero tra 0.0 e 1.0
+- Rispondi SOLO con il JSON, senza testo aggiuntivo."""
+
             # Prepara i parametri della richiesta
             request_params = {
                 "model": current_config.model_id,
                 "messages": [
                     {
                         "role": "system",
-                        "content": "Sei un trading AI professionale. Analizza i dati e rispondi SOLO con JSON valido secondo lo schema richiesto."
+                        "content": system_content
                     },
                     {
                         "role": "user",
@@ -163,12 +194,19 @@ def previsione_trading_agent(
                     }
                 ],
                 "temperature": 0.3,  # Bassa per decisioni più consistenti
-                "max_tokens": 1000,
                 "timeout": TIMEOUT_SECONDS
             }
             
-            # Aggiungi JSON schema se supportato
+            # Usa il parametro corretto per limitare i token di output
+            # GPT-5.1 richiede max_completion_tokens, altri modelli usano max_tokens
+            if current_config.use_max_completion_tokens:
+                request_params["max_completion_tokens"] = 1000
+            else:
+                request_params["max_tokens"] = 1000
+            
+            # Aggiungi formato JSON appropriato
             if current_config.supports_json_schema:
+                # Usa json_schema per modelli che lo supportano (OpenAI)
                 request_params["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
@@ -177,6 +215,9 @@ def previsione_trading_agent(
                         "schema": TRADE_DECISION_SCHEMA
                     }
                 }
+            else:
+                # Usa json_object per modelli che non supportano json_schema (es. DeepSeek)
+                request_params["response_format"] = {"type": "json_object"}
             
             response = current_client.chat.completions.create(**request_params)
 

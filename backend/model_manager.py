@@ -29,7 +29,8 @@ class ModelConfig:
         api_key_env: str,
         base_url: Optional[str] = None,
         supports_json_schema: bool = True,
-        supports_reasoning: bool = False
+        supports_reasoning: bool = False,
+        use_max_completion_tokens: bool = False
     ):
         self.name = name
         self.provider = provider
@@ -38,6 +39,7 @@ class ModelConfig:
         self.base_url = base_url
         self.supports_json_schema = supports_json_schema
         self.supports_reasoning = supports_reasoning
+        self.use_max_completion_tokens = use_max_completion_tokens
 
 
 # Configurazione modelli disponibili
@@ -48,7 +50,8 @@ AVAILABLE_MODELS: Dict[str, ModelConfig] = {
         model_id="gpt-5.1-2025-11-13",
         api_key_env="OPENAI_API_KEY",
         supports_json_schema=True,
-        supports_reasoning=True
+        supports_reasoning=True,
+        use_max_completion_tokens=True  # GPT-5.1 richiede max_completion_tokens invece di max_tokens
     ),
     "gpt-4o-mini": ModelConfig(
         name="GPT-4o Mini",
@@ -64,7 +67,7 @@ AVAILABLE_MODELS: Dict[str, ModelConfig] = {
         model_id="deepseek-chat",
         api_key_env="DEEPSEEK_API_KEY",
         base_url="https://api.deepseek.com",
-        supports_json_schema=True,
+        supports_json_schema=False,  # DeepSeek non supporta json_schema, usa json_object invece
         supports_reasoning=False
     )
 }
