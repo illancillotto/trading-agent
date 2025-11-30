@@ -15,11 +15,13 @@ class HyperLiquidTrader:
         self,
         secret_key: str,
         account_address: str,
+        master_account_address: str = None,
         testnet: bool = True,
         skip_ws: bool = True,
     ):
         self.secret_key = secret_key
-        self.account_address = account_address
+        self.account_address = account_address  # API wallet per Exchange (trading)
+        self.master_account_address = master_account_address or account_address  # Master Account per Info (lettura)
 
         base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
         self.base_url = base_url
@@ -28,6 +30,7 @@ class HyperLiquidTrader:
         account: LocalAccount = eth_account.Account.from_key(secret_key)
 
         self.info = Info(base_url, skip_ws=skip_ws)
+        # Exchange usa account_address (API wallet) per le operazioni di trading
         self.exchange = Exchange(account, base_url, account_address=account_address)
 
         # cache meta per tick-size e min-size
@@ -97,7 +100,7 @@ class HyperLiquidTrader:
     def get_current_leverage(self, symbol: str) -> Dict[str, Any]:
         """Ottieni info sulla leva corrente per un simbolo"""
         try:
-            user_state = self.info.user_state(self.account_address)
+            user_state = self.info.user_state(self.master_account_address)
             
             # Cerca nelle posizioni aperte
             for position in user_state.get('assetPositions', []):
@@ -189,7 +192,7 @@ class HyperLiquidTrader:
         print(f"📊 Leva attuale per {symbol}: {current_leverage_info}")
 
         # Ora procedi con l'apertura della posizione
-        user = self.info.user_state(self.account_address)
+        user = self.info.user_state(self.master_account_address)
         balance_usd = Decimal(str(user["marginSummary"]["accountValue"]))
 
         if balance_usd <= 0:
@@ -263,8 +266,77 @@ class HyperLiquidTrader:
     #                           STATO ACCOUNT
     # ----------------------------------------------------------------------
     def get_account_status(self) -> Dict[str, Any]:
-        data = self.info.user_state(self.account_address)
-        balance = float(data["marginSummary"]["accountValue"])
+        """
+        Ottiene lo stato dell'account Hyperliquid.
+        Include sia Perps che Spot account.
+        
+        Returns:
+            Dict con balance_usd (total equity), perps_balance, spot_balance e open_positions
+        """
+        try:
+            # Usa master_account_address per le chiamate di lettura (Info)
+            # Il master account è quello che contiene i fondi
+            data = self.info.user_state(self.master_account_address)
+        except Exception as e:
+            print(f"❌ Errore recupero user_state: {e}")
+            raise
+        
+        # Estrai balance da marginSummary (Perps Account)
+        margin_summary = data.get("marginSummary", {})
+        perps_balance = float(margin_summary.get("accountValue", "0.0"))
+        
+        # Estrai balance da crossMarginSummary (include Spot + Perps)
+        cross_margin_summary = data.get("crossMarginSummary", {})
+        total_equity = float(cross_margin_summary.get("accountValue", "0.0"))
+        
+        # Prova a recuperare saldi Spot direttamente
+        spot_balance = 0.0
+        try:
+            spot_state = self.info.spot_user_state(self.master_account_address)
+            if isinstance(spot_state, dict) and "balances" in spot_state:
+                # Calcola il totale dei saldi Spot
+                for balance_item in spot_state.get("balances", []):
+                    if isinstance(balance_item, dict):
+                        # Cerca il valore in USD o USDC
+                        total = balance_item.get("total", "0")
+                        coin = balance_item.get("coin", "")
+                        if coin == "USDC" or coin == "USD":
+                            spot_balance += float(total)
+        except Exception as e:
+            # Se spot_user_state fallisce, continua senza Spot balance
+            pass
+        
+        # Se total_equity è 0, prova a sommare Perps + Spot
+        if total_equity == 0.0:
+            total_equity = perps_balance + spot_balance
+        
+        # Se ancora 0, usa perps_balance come fallback
+        if total_equity == 0.0 and perps_balance > 0.0:
+            total_equity = perps_balance
+        
+        # Workaround per testnet: se tutto è 0 ma withdrawable > 0, usa quello
+        withdrawable = float(data.get("withdrawable", "0.0"))
+        if total_equity == 0.0 and withdrawable > 0.0:
+            total_equity = withdrawable
+            print(f"💡 Usando withdrawable come fallback: ${withdrawable}")
+        
+        # Usa total_equity come balance principale
+        balance = total_equity
+        
+        # Log per debug se balance è zero
+        if balance == 0.0:
+            print(f"⚠️ ATTENZIONE: Saldo zero per Master Account {self.master_account_address}")
+            print(f"   Base URL: {self.base_url}")
+            print(f"   API Wallet: {self.account_address}")
+            print(f"   Master Account: {self.master_account_address}")
+            print(f"   Margin Summary (Perps): {margin_summary}")
+            print(f"   Cross Margin Summary (Total): {cross_margin_summary}")
+            print(f"   Spot Balance (da spot_user_state): ${spot_balance}")
+            print(f"   Withdrawable: {data.get('withdrawable', '0.0')}")
+            print(f"   💡 NOTA: Verifica che MASTER_ACCOUNT_ADDRESS nel .env sia corretto")
+            print(f"      e che il Master Account abbia fondi su Perps.")
+            if "testnet" in self.base_url:
+                print(f"      Verifica sul sito: https://app.hyperliquid-testnet.xyz/portfolio")
 
         mids = self.info.all_mids()
         positions = []
@@ -311,7 +383,9 @@ class HyperLiquidTrader:
             })
 
         return {
-            "balance_usd": balance,
+            "balance_usd": balance,  # Total Equity (Perps + Spot)
+            "perps_balance_usd": perps_balance,  # Solo Perps Account
+            "spot_balance_usd": spot_balance,  # Solo Spot Account (calcolato)
             "open_positions": positions,
         }
     

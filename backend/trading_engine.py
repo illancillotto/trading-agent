@@ -72,6 +72,14 @@ CONFIG = {
 # Credenziali - seleziona in base a TESTNET
 IS_TESTNET = CONFIG["TESTNET"]
 
+# Master Account Address (stesso per mainnet e testnet)
+MASTER_ACCOUNT_ADDRESS = os.getenv("MASTER_ACCOUNT_ADDRESS")
+if not MASTER_ACCOUNT_ADDRESS:
+    logger.error("❌ MASTER_ACCOUNT_ADDRESS mancante nel .env")
+    logger.error("   Questo è l'indirizzo del Master Account che contiene i fondi")
+    logger.error("   Usato per le chiamate di lettura (Info API)")
+    sys.exit(1)
+
 if IS_TESTNET:
     PRIVATE_KEY = os.getenv("TESTNET_PRIVATE_KEY") or os.getenv("PRIVATE_KEY")
     WALLET_ADDRESS = os.getenv("TESTNET_WALLET_ADDRESS") or os.getenv("WALLET_ADDRESS")
@@ -93,6 +101,8 @@ if not PRIVATE_KEY or not WALLET_ADDRESS:
     sys.exit(1)
 
 logger.info(f"🌐 Modalità: {network_name}")
+logger.info(f"   Master Account: {MASTER_ACCOUNT_ADDRESS}")
+logger.info(f"   API Wallet: {WALLET_ADDRESS}")
 if IS_TESTNET:
     logger.info(f"   Testnet URL: https://app.hyperliquid-testnet.xyz/trade")
 
@@ -126,10 +136,13 @@ class BotState:
             # Trader
             self.trader = HyperLiquidTrader(
                 secret_key=PRIVATE_KEY,
-                account_address=WALLET_ADDRESS,
+                account_address=WALLET_ADDRESS,  # API wallet per Exchange (trading)
+                master_account_address=MASTER_ACCOUNT_ADDRESS,  # Master Account per Info (lettura)
                 testnet=CONFIG["TESTNET"]
             )
             logger.info(f"✅ HyperLiquid Trader inizializzato ({'testnet' if CONFIG['TESTNET'] else 'mainnet'})")
+            logger.info(f"   Master Account: {MASTER_ACCOUNT_ADDRESS}")
+            logger.info(f"   API Wallet: {WALLET_ADDRESS}")
 
             # Risk Manager
             risk_config = RiskConfig(
