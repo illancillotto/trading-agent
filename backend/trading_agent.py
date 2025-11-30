@@ -1,29 +1,18 @@
 """
-Trading Agent - Decisioni AI con OpenAI GPT-4o
+Trading Agent - Decisioni AI con supporto multi-modello
 """
-from openai import OpenAI
-from dotenv import load_dotenv
-import os
 import json
 import logging
 import time
 from typing import Optional, Dict, Any
 
-load_dotenv()
+from model_manager import get_model_manager
+
 logger = logging.getLogger(__name__)
-
-# Configurazione
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY non trovata nel .env")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Costanti
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 60
-PRIMARY_MODEL = "gpt-4o-2024-11-20"
-FALLBACK_MODEL = "gpt-4o-mini"
 
 # JSON Schema per structured output
 TRADE_DECISION_SCHEMA = {
@@ -96,13 +85,18 @@ TRADE_DECISION_SCHEMA = {
 }
 
 
-def previsione_trading_agent(prompt: str, max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
+def previsione_trading_agent(
+    prompt: str,
+    max_retries: int = MAX_RETRIES,
+    model_key: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Chiama OpenAI GPT-4o per ottenere decisioni di trading strutturate.
+    Chiama il modello AI selezionato per ottenere decisioni di trading strutturate.
 
     Args:
         prompt: System prompt con dati di mercato e portfolio
         max_retries: Numero massimo di tentativi
+        model_key: Chiave del modello da usare (None = modello corrente)
 
     Returns:
         Dict con la decisione di trading
@@ -110,19 +104,55 @@ def previsione_trading_agent(prompt: str, max_retries: int = MAX_RETRIES) -> Dic
     Raises:
         RuntimeError: Se tutti i tentativi falliscono
     """
-
+    model_manager = get_model_manager()
+    
+    # Determina il modello da usare
+    if model_key:
+        if not model_manager.is_model_available(model_key):
+            logger.error(f"❌ Modello {model_key} non disponibile")
+            model_key = None
+    
+    if not model_key:
+        model_key = model_manager.get_current_model()
+    
+    model_config = model_manager.get_model_config(model_key)
+    client = model_manager.get_client(model_key)
+    
+    if not client or not model_config:
+        logger.error(f"❌ Client o configurazione non disponibile per {model_key}")
+        raise RuntimeError(f"Modello {model_key} non disponibile")
+    
+    # Lista di modelli fallback (escludendo quello corrente)
+    fallback_models = [m for m in model_manager.get_available_models() 
+                      if m["id"] != model_key and m["available"]]
+    
     last_error = None
 
     for attempt in range(max_retries):
         try:
-            # Usa modello primario, fallback al secondo tentativo
-            model = PRIMARY_MODEL if attempt < 2 else FALLBACK_MODEL
+            # Usa modello corrente per i primi tentativi, poi fallback
+            if attempt == 0:
+                current_model_key = model_key
+            elif attempt < len(fallback_models) + 1:
+                current_model_key = fallback_models[attempt - 1]["id"]
+            else:
+                current_model_key = model_key  # Ultimo tentativo con modello originale
+            
+            current_config = model_manager.get_model_config(current_model_key)
+            current_client = model_manager.get_client(current_model_key)
+            
+            if not current_client or not current_config:
+                continue
+            
+            logger.info(
+                f"🤖 API call (attempt {attempt + 1}/{max_retries}, "
+                f"model: {current_config.name} ({current_config.model_id}))"
+            )
 
-            logger.info(f"🤖 OpenAI API call (attempt {attempt + 1}/{max_retries}, model: {model})")
-
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
+            # Prepara i parametri della richiesta
+            request_params = {
+                "model": current_config.model_id,
+                "messages": [
                     {
                         "role": "system",
                         "content": "Sei un trading AI professionale. Analizza i dati e rispondi SOLO con JSON valido secondo lo schema richiesto."
@@ -132,24 +162,29 @@ def previsione_trading_agent(prompt: str, max_retries: int = MAX_RETRIES) -> Dic
                         "content": prompt
                     }
                 ],
-                response_format={
+                "temperature": 0.3,  # Bassa per decisioni più consistenti
+                "max_tokens": 1000,
+                "timeout": TIMEOUT_SECONDS
+            }
+            
+            # Aggiungi JSON schema se supportato
+            if current_config.supports_json_schema:
+                request_params["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
                         "name": "trade_decision",
                         "strict": True,
                         "schema": TRADE_DECISION_SCHEMA
                     }
-                },
-                temperature=0.3,  # Bassa per decisioni più consistenti
-                max_tokens=1000,
-                timeout=TIMEOUT_SECONDS
-            )
+                }
+            
+            response = current_client.chat.completions.create(**request_params)
 
             # Estrai risposta
             response_text = response.choices[0].message.content
 
             if not response_text:
-                raise ValueError("Risposta vuota da OpenAI")
+                raise ValueError(f"Risposta vuota da {current_config.name}")
 
             # Parse JSON
             decision = json.loads(response_text)
@@ -158,9 +193,13 @@ def previsione_trading_agent(prompt: str, max_retries: int = MAX_RETRIES) -> Dic
             _validate_decision(decision)
 
             logger.info(
-                f"✅ Decisione: {decision['operation']} {decision['symbol']} "
+                f"✅ Decisione ({current_config.name}): {decision['operation']} {decision['symbol']} "
                 f"{decision['direction']} (confidence: {decision['confidence']:.1%})"
             )
+            
+            # Aggiungi info sul modello usato alla risposta
+            decision["_model_used"] = current_model_key
+            decision["_model_name"] = current_config.name
 
             return decision
 
