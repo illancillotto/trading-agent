@@ -149,13 +149,13 @@ def previsione_trading_agent(
                 f"model: {current_config.name} ({current_config.model_id}))"
             )
 
-            # Prepara il system prompt in base alle capacità del modello
+            # Prepare system prompt based on model capabilities
             if current_config.supports_json_schema:
-                # Per modelli con json_schema, il prompt può essere più semplice
-                system_content = "Sei un trading AI professionale. Analizza i dati e rispondi SOLO con JSON valido secondo lo schema richiesto."
+                # For models with json_schema, the prompt can be simpler
+                system_content = "You are a professional trading AI. Analyze the data and respond ONLY with valid JSON according to the required schema."
             else:
-                # Per modelli senza json_schema (es. DeepSeek), includi lo schema nel prompt
-                system_content = """Sei un trading AI professionale. Analizza i dati e rispondi ESCLUSIVAMENTE con un JSON valido in questo formato esatto:
+                # For models without json_schema (e.g. DeepSeek), include the schema in the prompt
+                system_content = """You are a professional trading AI. Analyze the data and respond EXCLUSIVELY with a valid JSON in this exact format:
 
 {
   "operation": "open|close|hold",
@@ -165,20 +165,20 @@ def previsione_trading_agent(
   "leverage": 3,
   "stop_loss_pct": 2.0,
   "take_profit_pct": 5.0,
-  "reason": "Spiegazione dettagliata della decisione",
+  "reason": "Detailed explanation of the decision",
   "confidence": 0.7
 }
 
-IMPORTANTE: 
-- operation deve essere uno di: "open", "close", "hold"
-- symbol deve essere uno di: "BTC", "ETH", "SOL"
-- direction deve essere "long" o "short"
-- target_portion_of_balance: numero tra 0.0 e 1.0
-- leverage: intero tra 1 e 10
-- stop_loss_pct: numero tra 0.5 e 10
-- take_profit_pct: numero tra 1 e 50
-- confidence: numero tra 0.0 e 1.0
-- Rispondi SOLO con il JSON, senza testo aggiuntivo."""
+IMPORTANT: 
+- operation must be one of: "open", "close", "hold"
+- symbol must be one of: "BTC", "ETH", "SOL"
+- direction must be "long" or "short"
+- target_portion_of_balance: number between 0.0 and 1.0
+- leverage: integer between 1 and 10
+- stop_loss_pct: number between 0.5 and 10
+- take_profit_pct: number between 1 and 50
+- confidence: number between 0.0 and 1.0
+- Respond ONLY with the JSON, without additional text."""
 
             # Prepara i parametri della richiesta
             request_params = {

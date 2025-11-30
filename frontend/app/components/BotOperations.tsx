@@ -135,19 +135,15 @@ export function BotOperations({ operations }: BotOperationsProps) {
                     ) : (
                       <p className="mt-2 mb-2 text-xs sm:text-sm">{reason}</p>
                     )}
-                    <details className="mt-1">
-                      <summary
-                        className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          toggleReason(op.id)
-                        }}
-                      >
-                        {expandedReasons.has(op.id)
-                          ? 'Nascondi ragionamento'
-                          : 'Vedi ragionamento completo'}
-                      </summary>
-                    </details>
+                    <button
+                      type="button"
+                      className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600 bg-transparent border-none p-0 underline mt-1"
+                      onClick={() => toggleReason(op.id)}
+                    >
+                      {expandedReasons.has(op.id)
+                        ? '▼ Nascondi ragionamento'
+                        : '▶ Vedi ragionamento completo'}
+                    </button>
                   </>
                 ) : (
                   <p className="mt-2 mb-2 text-xs sm:text-sm">{reason}</p>
@@ -156,40 +152,39 @@ export function BotOperations({ operations }: BotOperationsProps) {
             )}
 
             {op.system_prompt && (
-              <details className="mt-1">
-                <summary
-                  className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    togglePrompt(op.id)
-                  }}
+              <div className="mt-1">
+                <button
+                  type="button"
+                  className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600 bg-transparent border-none p-0 underline"
+                  onClick={() => togglePrompt(op.id)}
                 >
-                  {expandedPrompts.has(op.id) ? 'Nascondi prompt' : 'Vedi full prompt'}
-                </summary>
+                  {expandedPrompts.has(op.id) ? '▼ Nascondi prompt' : '▶ Vedi full prompt'}
+                </button>
                 {expandedPrompts.has(op.id) && (
                   <pre className="whitespace-pre-wrap break-words max-h-[200px] sm:max-h-[260px] overflow-y-auto text-[10px] sm:text-xs bg-gray-100 p-2 rounded border border-gray-200 mt-1">
                     {op.system_prompt}
                   </pre>
                 )}
-              </details>
+              </div>
             )}
 
-            <details className="mt-1">
-              <summary
-                className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600"
-                onClick={(e) => {
-                  e.preventDefault()
-                  toggleJson(op.id)
-                }}
+            <div className="mt-1">
+              <button
+                type="button"
+                className="cursor-pointer text-muted-foreground text-[10px] sm:text-xs hover:text-blue-600 bg-transparent border-none p-0 underline"
+                onClick={() => toggleJson(op.id)}
               >
-                {expandedJsons.has(op.id) ? 'Nascondi JSON' : 'Vedi JSON completo'}
-              </summary>
-              {expandedJsons.has(op.id) && (
+                {expandedJsons.has(op.id) ? '▼ Nascondi JSON' : '▶ Vedi JSON completo'}
+              </button>
+              {expandedJsons.has(op.id) && op.raw_payload && (
                 <pre className="whitespace-pre-wrap break-words max-h-[200px] sm:max-h-[260px] overflow-y-auto text-[10px] sm:text-xs bg-gray-100 p-2 rounded border border-gray-200 mt-1">
                   {JSON.stringify(op.raw_payload, null, 2)}
                 </pre>
               )}
-            </details>
+              {expandedJsons.has(op.id) && !op.raw_payload && (
+                <p className="text-xs text-muted-foreground mt-1 italic">Nessun dato JSON disponibile</p>
+              )}
+            </div>
           </article>
         )
       })}
