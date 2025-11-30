@@ -28,8 +28,15 @@ Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.a
    - `DATABASE_URL` - Connection string PostgreSQL
 
    **Variabili per Trading Live:**
-   - `PRIVATE_KEY` - Chiave privata wallet Hyperliquid
-   - `WALLET_ADDRESS` - Indirizzo wallet Hyperliquid
+   - `TESTNET` - Modalità testnet/mainnet ("true" per testnet, "false" per mainnet, default: "true")
+   - **Per Testnet:**
+     - `TESTNET_PRIVATE_KEY` - Chiave privata wallet Hyperliquid Testnet
+     - `TESTNET_WALLET_ADDRESS` - Indirizzo wallet Hyperliquid Testnet
+     - Testnet URL: https://app.hyperliquid-testnet.xyz/trade
+     - Testnet Faucet: https://app.hyperliquid-testnet.xyz/drip
+   - **Per Mainnet:**
+     - `PRIVATE_KEY` - Chiave privata wallet Hyperliquid Mainnet
+     - `WALLET_ADDRESS` - Indirizzo wallet Hyperliquid Mainnet
 
    **Variabili OPZIONALI (migliorano le funzionalità):**
    - `DEEPSEEK_API_KEY` - Per usare il modello DeepSeek

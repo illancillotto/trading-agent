@@ -43,9 +43,11 @@ from notifications import notifier
 #                      CONFIGURAZIONE
 # ============================================================
 
+# Leggi TESTNET da variabile d'ambiente (default: True)
+TESTNET_ENV = os.getenv("TESTNET", "true").lower()
 CONFIG = {
     # Trading
-    "TESTNET": True,
+    "TESTNET": TESTNET_ENV in ("true", "1", "yes"),
     "TICKERS": ["BTC", "ETH", "SOL"],
     "CYCLE_INTERVAL_MINUTES": 3,
 
@@ -67,13 +69,32 @@ CONFIG = {
     "MIN_CONFIDENCE": 0.4,  # Non eseguire trade con confidence < 40%
 }
 
-# Credenziali
-PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+# Credenziali - seleziona in base a TESTNET
+IS_TESTNET = CONFIG["TESTNET"]
+
+if IS_TESTNET:
+    PRIVATE_KEY = os.getenv("TESTNET_PRIVATE_KEY") or os.getenv("PRIVATE_KEY")
+    WALLET_ADDRESS = os.getenv("TESTNET_WALLET_ADDRESS") or os.getenv("WALLET_ADDRESS")
+    network_name = "TESTNET"
+else:
+    PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+    WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+    network_name = "MAINNET"
 
 if not PRIVATE_KEY or not WALLET_ADDRESS:
-    logger.error("❌ PRIVATE_KEY o WALLET_ADDRESS mancanti nel .env")
+    logger.error(f"❌ Credenziali mancanti per {network_name}")
+    if IS_TESTNET:
+        logger.error("   Richieste: TESTNET_PRIVATE_KEY e TESTNET_WALLET_ADDRESS")
+        logger.error("   (o PRIVATE_KEY e WALLET_ADDRESS come fallback)")
+        logger.error("   Testnet URL: https://app.hyperliquid-testnet.xyz/trade")
+        logger.error("   Testnet Faucet: https://app.hyperliquid-testnet.xyz/drip")
+    else:
+        logger.error("   Richieste: PRIVATE_KEY e WALLET_ADDRESS")
     sys.exit(1)
+
+logger.info(f"🌐 Modalità: {network_name}")
+if IS_TESTNET:
+    logger.info(f"   Testnet URL: https://app.hyperliquid-testnet.xyz/trade")
 
 
 # ============================================================
@@ -222,7 +243,10 @@ def trading_cycle() -> None:
 
         # Indicatori tecnici
         try:
-            indicators_txt, indicators_json = analyze_multiple_tickers(tickers)
+            indicators_txt, indicators_json = analyze_multiple_tickers(
+                tickers, 
+                testnet=CONFIG["TESTNET"]
+            )
             logger.info(f"✅ Indicatori tecnici per {len(tickers)} ticker")
         except Exception as e:
             logger.warning(f"⚠️ Errore indicatori: {e}")
@@ -247,7 +271,10 @@ def trading_cycle() -> None:
 
         # Forecast
         try:
-            forecasts_txt, forecasts_json = get_crypto_forecasts()
+            forecasts_txt, forecasts_json = get_crypto_forecasts(
+                tickers=tickers,
+                testnet=CONFIG["TESTNET"]
+            )
             logger.info("✅ Forecast recuperati")
         except Exception as e:
             logger.warning(f"⚠️ Errore forecast: {e}")
