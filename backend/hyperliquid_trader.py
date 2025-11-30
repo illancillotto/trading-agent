@@ -170,7 +170,106 @@ class HyperLiquidTrader:
 
         if op == "close":
             print(f"[HyperLiquidTrader] Market CLOSE per {symbol}")
-            return self.exchange.market_close(symbol)
+            
+            # Verifica se esiste una posizione aperta e ottieni il simbolo esatto
+            try:
+                account_status = self.get_account_status()
+                open_positions = account_status.get("open_positions", [])
+                
+                # Cerca la posizione - può essere con simbolo esatto o simile
+                matching_position = None
+                for pos in open_positions:
+                    pos_symbol = pos.get("symbol", "")
+                    # Match esatto o parziale (es. "BTC" matcha "BTC" o contiene "BTC")
+                    if pos_symbol == symbol or symbol in pos_symbol or pos_symbol in symbol:
+                        matching_position = pos
+                        break
+                
+                if not matching_position:
+                    return {
+                        "status": "skipped",
+                        "message": f"Nessuna posizione aperta per {symbol} da chiudere"
+                    }
+                
+                # Usa il simbolo esatto dalla posizione
+                exact_symbol = matching_position.get("symbol", symbol)
+                position_size = matching_position.get("size", 0)
+                position_side = matching_position.get("side", "long")
+                
+                print(f"[HyperLiquidTrader] Chiusura posizione: {exact_symbol}, size: {position_size}, side: {position_side}")
+                
+            except Exception as e:
+                # Se non riusciamo a verificare, procediamo comunque con market_close usando il simbolo originale
+                print(f"⚠️ Impossibile verificare posizione per {symbol}: {e}")
+                exact_symbol = symbol
+            
+            # Prova a chiudere con market_close
+            print(f"[HyperLiquidTrader] Tentativo market_close per {exact_symbol}...")
+            result = self.exchange.market_close(exact_symbol)
+            
+            # Log dettagliato del risultato
+            print(f"[HyperLiquidTrader] market_close result: {result}")
+            print(f"[HyperLiquidTrader] result type: {type(result)}")
+            
+            # Se market_close ritorna None, prova metodo alternativo
+            if result is None:
+                print(f"⚠️ market_close ritornato None per {exact_symbol}, provo metodo alternativo...")
+                
+                try:
+                    # Metodo alternativo: chiudi aprendo una posizione opposta della stessa dimensione
+                    account_status_retry = self.get_account_status()
+                    open_positions_retry = account_status_retry.get("open_positions", [])
+                    
+                    for pos in open_positions_retry:
+                        if pos.get("symbol") == exact_symbol:
+                            pos_size = pos.get("size", 0)
+                            pos_side = pos.get("side", "long")
+                            
+                            # Apri posizione opposta per chiudere
+                            is_buy = (pos_side == "short")  # Se era short, compra per chiudere
+                            
+                            # market_open richiede un float, non una stringa
+                            size_to_close = float(pos_size)
+                            
+                            print(f"[HyperLiquidTrader] Tentativo chiusura alternativa: {'BUY' if is_buy else 'SELL'} {size_to_close} {exact_symbol}")
+                            
+                            alt_result = self.exchange.market_open(
+                                exact_symbol,
+                                is_buy,
+                                size_to_close,
+                                None,  # SL
+                                0.01   # Slippage
+                            )
+                            
+                            print(f"[HyperLiquidTrader] Metodo alternativo result: {alt_result}")
+                            
+                            if alt_result and isinstance(alt_result, dict) and alt_result.get("status") != "err":
+                                return {
+                                    "status": "ok",
+                                    "message": f"Posizione {exact_symbol} chiusa con metodo alternativo",
+                                    "method": "alternative"
+                                }
+                            break
+                except Exception as e:
+                    print(f"❌ Errore metodo alternativo: {e}")
+                
+                # Se anche il metodo alternativo fallisce
+                return {
+                    "status": "error",
+                    "message": f"market_close returned None per {exact_symbol} - posizione ancora aperta. Verifica manualmente.",
+                    "symbol_used": exact_symbol
+                }
+            
+            # Se result è un dizionario con status "err", è un errore
+            if isinstance(result, dict) and result.get("status") == "err":
+                error_msg = result.get("response", {}).get("data", "Errore sconosciuto")
+                return {
+                    "status": "error",
+                    "message": f"Errore chiusura {exact_symbol}: {error_msg}",
+                    "symbol_used": exact_symbol
+                }
+            
+            return result
 
         # OPEN --------------------------------------------------------
         # Prima di aprire la posizione, imposta la leva desiderata
@@ -260,6 +359,10 @@ class HyperLiquidTrader:
             0.01
         )
 
+        # Assicurati che res sia sempre un dizionario
+        if res is None:
+            return {"status": "error", "message": "market_open returned None"}
+        
         return res
 
     # ----------------------------------------------------------------------
@@ -421,11 +524,111 @@ class HyperLiquidTrader:
 
         # CLOSE - chiudi posizione
         if op == "close":
-            result = self.exchange.market_close(symbol)
-
-            # Rimuovi dal tracking
+            # Verifica se esiste una posizione aperta e ottieni il simbolo esatto
+            try:
+                account_status = self.get_account_status()
+                open_positions = account_status.get("open_positions", [])
+                
+                # Cerca la posizione - può essere con simbolo esatto o simile
+                matching_position = None
+                for pos in open_positions:
+                    pos_symbol = pos.get("symbol", "")
+                    # Match esatto o parziale (es. "BTC" matcha "BTC" o contiene "BTC")
+                    if pos_symbol == symbol or symbol in pos_symbol or pos_symbol in symbol:
+                        matching_position = pos
+                        break
+                
+                if not matching_position:
+                    # Rimuovi comunque dal tracking se non esiste più
+                    risk_manager.remove_position(symbol)
+                    return {
+                        "status": "skipped",
+                        "message": f"Nessuna posizione aperta per {symbol} da chiudere"
+                    }
+                
+                # Usa il simbolo esatto dalla posizione
+                exact_symbol = matching_position.get("symbol", symbol)
+                position_size = matching_position.get("size", 0)
+                position_side = matching_position.get("side", "long")
+                
+                print(f"[HyperLiquidTrader] Chiusura posizione: {exact_symbol}, size: {position_size}, side: {position_side}")
+                
+            except Exception as e:
+                # Se non riusciamo a verificare, procediamo comunque con market_close usando il simbolo originale
+                print(f"⚠️ Impossibile verificare posizione per {symbol}: {e}")
+                exact_symbol = symbol
+            
+            # Prova a chiudere con market_close
+            print(f"[HyperLiquidTrader] Tentativo market_close per {exact_symbol}...")
+            result = self.exchange.market_close(exact_symbol)
+            
+            # Log dettagliato del risultato
+            print(f"[HyperLiquidTrader] market_close result: {result}")
+            print(f"[HyperLiquidTrader] result type: {type(result)}")
+            
+            # Se market_close ritorna None, prova metodo alternativo
+            if result is None:
+                print(f"⚠️ market_close ritornato None per {exact_symbol}, provo metodo alternativo...")
+                
+                try:
+                    # Metodo alternativo: chiudi aprendo una posizione opposta della stessa dimensione
+                    # Questo è un workaround se market_close non funziona
+                    account_status_retry = self.get_account_status()
+                    open_positions_retry = account_status_retry.get("open_positions", [])
+                    
+                    for pos in open_positions_retry:
+                        if pos.get("symbol") == exact_symbol:
+                            pos_size = pos.get("size", 0)
+                            pos_side = pos.get("side", "long")
+                            
+                            # Apri posizione opposta per chiudere
+                            is_buy = (pos_side == "short")  # Se era short, compra per chiudere
+                            
+                            # market_open richiede un float, non una stringa
+                            size_to_close = float(pos_size)
+                            
+                            print(f"[HyperLiquidTrader] Tentativo chiusura alternativa: {'BUY' if is_buy else 'SELL'} {size_to_close} {exact_symbol}")
+                            
+                            alt_result = self.exchange.market_open(
+                                exact_symbol,
+                                is_buy,
+                                size_to_close,
+                                None,  # SL
+                                0.01   # Slippage
+                            )
+                            
+                            print(f"[HyperLiquidTrader] Metodo alternativo result: {alt_result}")
+                            
+                            if alt_result and isinstance(alt_result, dict) and alt_result.get("status") != "err":
+                                # Rimuovi dal tracking solo se la chiusura alternativa ha funzionato
+                                risk_manager.remove_position(symbol)
+                                return {
+                                    "status": "ok",
+                                    "message": f"Posizione {exact_symbol} chiusa con metodo alternativo",
+                                    "method": "alternative"
+                                }
+                            break
+                except Exception as e:
+                    print(f"❌ Errore metodo alternativo: {e}")
+                
+                # Se anche il metodo alternativo fallisce, NON rimuovere dal tracking
+                return {
+                    "status": "error",
+                    "message": f"market_close returned None per {exact_symbol} - posizione ancora aperta. Verifica manualmente.",
+                    "symbol_used": exact_symbol
+                }
+            
+            # Se result è un dizionario con status "err", è un errore
+            if isinstance(result, dict) and result.get("status") == "err":
+                error_msg = result.get("response", {}).get("data", "Errore sconosciuto")
+                return {
+                    "status": "error",
+                    "message": f"Errore chiusura {exact_symbol}: {error_msg}",
+                    "symbol_used": exact_symbol
+                }
+            
+            # Rimuovi dal tracking solo se la chiusura è andata a buon fine
             risk_manager.remove_position(symbol)
-
             return result
 
         # OPEN - verifica con risk manager
@@ -455,6 +658,10 @@ class HyperLiquidTrader:
 
         # Esegui ordine
         result = self.execute_signal(adjusted_order)
+
+        # Assicurati che result sia sempre un dizionario
+        if result is None:
+            return {"status": "error", "message": "execute_signal returned None"}
 
         if result.get("status") == "ok" or "statuses" in result:
             # Ottieni prezzo di entry dai mids

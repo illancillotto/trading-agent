@@ -2,7 +2,23 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 import warnings
+import logging
+
+# Sopprimi warning generici
 warnings.filterwarnings('ignore')
+
+# Sopprimi specificamente il warning di convergenza ARIMA da statsmodels
+# Questo warning appare quando l'ottimizzazione Maximum Likelihood non converge,
+# ma il modello può comunque essere utilizzabile
+warnings.filterwarnings('ignore', category=UserWarning, module='statsmodels')
+warnings.filterwarnings('ignore', message='.*Maximum Likelihood optimization failed to converge.*')
+
+# Sopprimi specificamente l'errore di prophet.plot per plotly (non è critico)
+# Prophet stampa un ERROR quando plotly non è disponibile, ma non è necessario per il funzionamento
+# Questo evita il messaggio: "Importing plotly failed. Interactive plots will not work."
+prophet_plot_logger = logging.getLogger('prophet.plot')
+prophet_plot_logger.setLevel(logging.CRITICAL)
+prophet_plot_logger.disabled = True  # Disabilita completamente il logger
 
 # Import Prophet (opzionale)
 try:

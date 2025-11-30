@@ -7,6 +7,7 @@ import time
 from typing import Optional, Dict, Any
 
 from model_manager import get_model_manager
+from token_tracker import get_token_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ TRADE_DECISION_SCHEMA = {
 def previsione_trading_agent(
     prompt: str,
     max_retries: int = MAX_RETRIES,
-    model_key: Optional[str] = None
+    model_key: Optional[str] = None,
+    cycle_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Chiama il modello AI selezionato per ottenere decisioni di trading strutturate.
@@ -148,6 +150,9 @@ def previsione_trading_agent(
                 f"🤖 API call (attempt {attempt + 1}/{max_retries}, "
                 f"model: {current_config.name} ({current_config.model_id}))"
             )
+
+            # Misura tempo di risposta per tracking
+            start_time = time.time()
 
             # Prepare system prompt based on model capabilities
             if current_config.supports_json_schema:
@@ -220,6 +225,36 @@ IMPORTANT:
                 request_params["response_format"] = {"type": "json_object"}
             
             response = current_client.chat.completions.create(**request_params)
+
+            # Calcola tempo di risposta
+            response_time_ms = int((time.time() - start_time) * 1000)
+
+            # Traccia utilizzo token
+            try:
+                tracker = get_token_tracker()
+                usage = response.usage
+                
+                # Estrai simbolo dal prompt se possibile (per ticker)
+                ticker = None
+                if "symbol" in prompt.lower():
+                    # Cerca simboli comuni nel prompt
+                    for sym in ["BTC", "ETH", "SOL"]:
+                        if sym in prompt:
+                            ticker = sym
+                            break
+                
+                tracker.track_usage(
+                    model=current_config.model_id,
+                    input_tokens=usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 0,
+                    output_tokens=usage.completion_tokens if hasattr(usage, 'completion_tokens') else 0,
+                    purpose="Trading Decision",
+                    ticker=ticker,
+                    cycle_id=cycle_id,
+                    response_time_ms=response_time_ms
+                )
+            except Exception as e:
+                # Non bloccare il flusso se il tracking fallisce
+                logger.warning(f"⚠️ Errore tracking token: {e}")
 
             # Estrai risposta
             response_text = response.choices[0].message.content

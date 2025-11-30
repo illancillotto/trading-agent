@@ -335,17 +335,56 @@ def trading_cycle() -> None:
 
                 logger.warning(f"⚠️ {reason.upper()} trigger per {symbol}, PnL: ${pnl:.2f}")
 
-                # Chiudi posizione
+                # Chiudi posizione usando execute_signal_with_risk per avere la gestione completa
                 try:
-                    close_result = trader.exchange.market_close(symbol)
-                    logger.info(f"✅ Posizione {symbol} chiusa: {close_result}")
-
-                    # Registra risultato
-                    risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
-                    risk_manager.remove_position(symbol)
+                    close_order = {
+                        "operation": "close",
+                        "symbol": symbol,
+                        "direction": "long"  # Non importante per close, ma richiesto
+                    }
+                    
+                    close_result = trader.execute_signal_with_risk(
+                        close_order,
+                        risk_manager,
+                        balance_usd
+                    )
+                    
+                    # Gestisci diversi tipi di risultato
+                    if close_result is None:
+                        logger.error(f"❌ Chiusura {symbol} ritornato None - posizione potrebbe essere ancora aperta")
+                        # NON rimuovere dal tracking se la chiusura fallisce
+                    elif isinstance(close_result, dict):
+                        status = close_result.get("status", "unknown")
+                        if status == "skipped":
+                            logger.info(f"ℹ️ {close_result.get('message', f'Posizione {symbol} già chiusa')}")
+                            risk_manager.remove_position(symbol)
+                        elif status == "error":
+                            error_msg = close_result.get("message", "Errore sconosciuto")
+                            symbol_used = close_result.get("symbol_used", symbol)
+                            logger.error(f"❌ Errore chiusura {symbol} (simbolo usato: {symbol_used}): {error_msg}")
+                            logger.warning(f"⚠️ Posizione {symbol} NON rimossa dal tracking - verifica manualmente")
+                            # NON rimuovere dal tracking se la chiusura fallisce
+                        elif status == "ok":
+                            method = close_result.get("method", "standard")
+                            logger.info(f"✅ Posizione {symbol} chiusa ({method}): {close_result.get('message', '')}")
+                            # Registra risultato solo se la chiusura è andata a buon fine
+                            risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
+                            risk_manager.remove_position(symbol)
+                        else:
+                            # Risultato positivo ma status non standard
+                            logger.info(f"✅ Posizione {symbol} chiusa: {close_result}")
+                            risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
+                            risk_manager.remove_position(symbol)
+                    else:
+                        # Risultato non-dict (probabilmente successo)
+                        logger.info(f"✅ Posizione {symbol} chiusa: {close_result}")
+                        risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
+                        risk_manager.remove_position(symbol)
 
                 except Exception as e:
-                    logger.error(f"❌ Errore chiusura {symbol}: {e}")
+                    logger.error(f"❌ Eccezione durante chiusura {symbol}: {e}", exc_info=True)
+                    # NON rimuovere dal tracking in caso di eccezione
+                    logger.warning(f"⚠️ Posizione {symbol} NON rimossa dal tracking a causa dell'errore")
 
         # ========================================
         # 4. COSTRUISCI PROMPT
@@ -392,7 +431,10 @@ Circuit breaker: {'ATTIVO' if risk_status['circuit_breaker_active'] else 'inatti
         # ========================================
         logger.info("🤖 Richiesta decisione all'AI...")
 
-        decision = previsione_trading_agent(system_prompt)
+        # Genera cycle_id univoco per questo ciclo di trading
+        cycle_id = f"cycle_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+
+        decision = previsione_trading_agent(system_prompt, cycle_id=cycle_id)
 
         operation = decision.get("operation", "hold")
         symbol = decision.get("symbol", "BTC")

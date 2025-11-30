@@ -114,15 +114,68 @@ def format_whale_alerts_to_string():
 def fetch_whale_alerts_from_api(max_alerts: int = 10) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Recupera i whale alerts dall'API pubblica di whale-alert.io e li formatta per il prompt AI.
+    Filtra solo gli alert rilevanti per il trading bot (BTC, ETH, SOL, USDT, USDC) o verso/da exchange noti.
     
     Args:
-        max_alerts: Numero massimo di alert da includere (default: 10)
+        max_alerts: Numero massimo di alert da includere (default: 10, ma viene limitato a 5 per alert rilevanti)
     
     Returns:
         Tupla (formatted_text, alerts_list):
         - formatted_text: Stringa markdown formattata con gli alert
         - alerts_list: Lista di dizionari con i dati degli alert
     """
+    # Asset rilevanti per il trading bot
+    RELEVANT_ASSETS = ['BTC', 'ETH', 'SOL', 'USDT', 'USDC']
+    
+    # Exchange noti (case-insensitive)
+    KNOWN_EXCHANGES = [
+        'binance', 'okex', 'okx', 'coinbase', 'kraken', 'bitfinex',
+        'huobi', 'kucoin', 'bybit', 'gate.io', 'bitmex', 'ftx',
+        'gemini', 'crypto.com', 'bitstamp', 'bittrex', 'poloniex'
+    ]
+    
+    def is_relevant_alert(amount: str, description: str) -> bool:
+        """
+        Verifica se un alert è rilevante per il trading bot.
+        
+        Args:
+            amount: Campo text1 (es. "39,995 #ETH")
+            description: Campo text3 (es. "transferred from #OKEX to unknown wallet")
+        
+        Returns:
+            True se l'alert è rilevante, False altrimenti
+        """
+        # Normalizza i campi per la ricerca (uppercase per asset, lowercase per exchange)
+        amount_upper = amount.upper()
+        description_upper = description.upper()
+        description_lower = description.lower()
+        
+        # Controlla se amount contiene uno degli asset rilevanti
+        for asset in RELEVANT_ASSETS:
+            # Cerca il simbolo in vari formati: "#ETH", "ETH", " #ETH", "ETH ", etc.
+            if (f'#{asset}' in amount_upper or 
+                f' {asset} ' in amount_upper or 
+                f' {asset}' in amount_upper or 
+                f'{asset} ' in amount_upper or
+                amount_upper.endswith(asset) or 
+                amount_upper.startswith(asset)):
+                return True
+        
+        # Controlla se description contiene uno degli asset rilevanti
+        for asset in RELEVANT_ASSETS:
+            if (f'#{asset}' in description_upper or 
+                f' {asset} ' in description_upper or 
+                f' {asset}' in description_upper or 
+                f'{asset} ' in description_upper):
+                return True
+        
+        # Controlla se description menziona exchange noti
+        for exchange in KNOWN_EXCHANGES:
+            if exchange in description_lower:
+                return True
+        
+        return False
+    
     url = "https://whale-alert.io/data.json?alerts=9&prices=BTC&hodl=bitcoin%2CBTC&potential_profit=bitcoin%2CBTC&average_buy_price=bitcoin%2CBTC&realized_profit=bitcoin%2CBTC&volume=bitcoin%2CBTC&news=true"
     
     try:
@@ -157,6 +210,11 @@ def fetch_whale_alerts_from_api(max_alerts: int = 10) -> Tuple[str, List[Dict[st
                     description = parts[4].strip().strip('"')  # descrizione (text3)
                     link = parts[5].strip()  # link alla transazione
                     
+                    # Filtra solo alert rilevanti
+                    if not is_relevant_alert(amount, description):
+                        logger.debug(f"⚠️ Alert filtrato (non rilevante): {amount[:50]}...")
+                        continue
+                    
                     # Estrai valore USD numerico per ordinamento (rimuovi $ e virgole)
                     try:
                         usd_numeric = float(usd_value.replace('$', '').replace(',', ''))
@@ -180,14 +238,14 @@ def fetch_whale_alerts_from_api(max_alerts: int = 10) -> Tuple[str, List[Dict[st
                 continue
         
         if not alerts_parsed:
-            logger.warning("⚠️ Nessun alert valido dopo il parsing")
-            return "Whale alert non disponibili", []
+            logger.warning("⚠️ Nessun alert rilevante trovato dopo il filtro")
+            return "Nessun whale alert rilevante nelle ultime ore.", []
         
         # Ordina per valore USD decrescente (più grandi prima)
         alerts_parsed.sort(key=lambda x: x['usd_numeric'], reverse=True)
         
-        # Limita al numero massimo richiesto
-        alerts_parsed = alerts_parsed[:max_alerts]
+        # Limita a massimo 5 alert rilevanti (come specificato)
+        alerts_parsed = alerts_parsed[:5]
         
         # Formatta in markdown (senza emoji per risparmiare token)
         formatted_lines = []
@@ -233,7 +291,7 @@ def fetch_whale_alerts_from_api(max_alerts: int = 10) -> Tuple[str, List[Dict[st
         
         formatted_text = "\n".join(formatted_lines).strip()
         
-        logger.info(f"✅ Whale alerts recuperati: {len(alerts_parsed)} alert validi")
+        logger.info(f"✅ Whale alerts recuperati: {len(alerts_parsed)} alert rilevanti (filtrati per asset: {', '.join(RELEVANT_ASSETS)})")
         return formatted_text, alerts_list
         
     except requests.exceptions.RequestException as e:
