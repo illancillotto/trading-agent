@@ -131,6 +131,7 @@ class BotState:
         self.risk_manager: Optional[RiskManager] = None
         self.screener: Optional[CoinScreener] = None
         self.trend_engine: Optional[TrendConfirmationEngine] = None
+        self.active_trades: dict[str, int] = {}  # symbol -> trade_id mapping
         self.initialized: bool = False
         self.last_error: Optional[str] = None
 
@@ -366,13 +367,13 @@ def trading_cycle() -> None:
                         "symbol": symbol,
                         "direction": "long"  # Non importante per close, ma richiesto
                     }
-                    
+
                     close_result = trader.execute_signal_with_risk(
                         close_order,
                         risk_manager,
                         balance_usd
                     )
-                    
+
                     # Gestisci diversi tipi di risultato
                     if close_result is None:
                         logger.error(f"❌ Chiusura {symbol} ritornato None - posizione potrebbe essere ancora aperta")
@@ -382,6 +383,19 @@ def trading_cycle() -> None:
                         if status == "skipped":
                             logger.info(f"ℹ️ {close_result.get('message', f'Posizione {symbol} già chiusa')}")
                             risk_manager.remove_position(symbol)
+                            # Log trade closure (position already closed)
+                            if symbol in bot_state.active_trades:
+                                try:
+                                    db_utils.close_trade(
+                                        trade_id=bot_state.active_trades[symbol],
+                                        exit_price=current_prices.get(symbol, 0),
+                                        exit_reason="manual",  # Already closed outside bot
+                                        pnl_usd=0,
+                                        pnl_pct=0
+                                    )
+                                    del bot_state.active_trades[symbol]
+                                except Exception as log_err:
+                                    logger.warning(f"⚠️ Errore logging chiusura trade {symbol}: {log_err}")
                         elif status == "error":
                             error_msg = close_result.get("message", "Errore sconosciuto")
                             symbol_used = close_result.get("symbol_used", symbol)
@@ -394,16 +408,73 @@ def trading_cycle() -> None:
                             # Registra risultato solo se la chiusura è andata a buon fine
                             risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
                             risk_manager.remove_position(symbol)
+                            # Log trade closure
+                            if symbol in bot_state.active_trades:
+                                try:
+                                    # Get position info for P&L calculation
+                                    position = next((p for p in open_positions if p["symbol"] == symbol), None)
+                                    entry_price = position.get("entry_price", 0) if position else 0
+                                    exit_price = close_result.get("fill_price") or current_prices.get(symbol, 0)
+                                    pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price else None
+
+                                    db_utils.close_trade(
+                                        trade_id=bot_state.active_trades[symbol],
+                                        exit_price=exit_price,
+                                        exit_reason="stop_loss" if reason == "stop_loss" else "take_profit",
+                                        pnl_usd=pnl,
+                                        pnl_pct=pnl_pct,
+                                        fees_usd=close_result.get("fees", 0)
+                                    )
+                                    del bot_state.active_trades[symbol]
+                                    logger.debug(f"📝 Trade {symbol} logged as closed (SL/TP)")
+                                except Exception as log_err:
+                                    logger.warning(f"⚠️ Errore logging chiusura trade {symbol}: {log_err}")
                         else:
                             # Risultato positivo ma status non standard
                             logger.info(f"✅ Posizione {symbol} chiusa: {close_result}")
                             risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
                             risk_manager.remove_position(symbol)
+                            # Log trade closure
+                            if symbol in bot_state.active_trades:
+                                try:
+                                    position = next((p for p in open_positions if p["symbol"] == symbol), None)
+                                    entry_price = position.get("entry_price", 0) if position else 0
+                                    exit_price = current_prices.get(symbol, 0)
+                                    pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price else None
+
+                                    db_utils.close_trade(
+                                        trade_id=bot_state.active_trades[symbol],
+                                        exit_price=exit_price,
+                                        exit_reason="stop_loss" if reason == "stop_loss" else "take_profit",
+                                        pnl_usd=pnl,
+                                        pnl_pct=pnl_pct
+                                    )
+                                    del bot_state.active_trades[symbol]
+                                except Exception as log_err:
+                                    logger.warning(f"⚠️ Errore logging chiusura trade {symbol}: {log_err}")
                     else:
                         # Risultato non-dict (probabilmente successo)
                         logger.info(f"✅ Posizione {symbol} chiusa: {close_result}")
                         risk_manager.record_trade_result(pnl, was_stop_loss=(reason == "stop_loss"))
                         risk_manager.remove_position(symbol)
+                        # Log trade closure
+                        if symbol in bot_state.active_trades:
+                            try:
+                                position = next((p for p in open_positions if p["symbol"] == symbol), None)
+                                entry_price = position.get("entry_price", 0) if position else 0
+                                exit_price = current_prices.get(symbol, 0)
+                                pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price else None
+
+                                db_utils.close_trade(
+                                    trade_id=bot_state.active_trades[symbol],
+                                    exit_price=exit_price,
+                                    exit_reason="stop_loss" if reason == "stop_loss" else "take_profit",
+                                    pnl_usd=pnl,
+                                    pnl_pct=pnl_pct
+                                )
+                                del bot_state.active_trades[symbol]
+                            except Exception as log_err:
+                                logger.warning(f"⚠️ Errore logging chiusura trade {symbol}: {log_err}")
 
                 except Exception as e:
                     logger.error(f"❌ Eccezione durante chiusura {symbol}: {e}", exc_info=True)
@@ -578,6 +649,67 @@ Trend Analysis for {symbol}:
 
                     if result.get("status") == "ok" or "statuses" in result:
                         logger.info(f"✅ Trade eseguito: {result}")
+
+                        # ========================================
+                        # 6.5 LOG EXECUTED TRADE
+                        # ========================================
+                        try:
+                            # Will be set after logging bot_operation
+                            op_id_placeholder = None  # Will be filled after section 7
+
+                            if operation == "open" and result.get("status") == "ok":
+                                # Log opened trade
+                                trade_id = db_utils.log_executed_trade(
+                                    bot_operation_id=None,  # Will update after bot_operation is logged
+                                    trade_type="open",
+                                    symbol=symbol,
+                                    direction=direction,
+                                    size=result.get("size", decision.get("size", 0)),
+                                    entry_price=result.get("fill_price"),
+                                    leverage=decision.get("leverage"),
+                                    stop_loss_price=decision.get("stop_loss"),
+                                    take_profit_price=decision.get("take_profit"),
+                                    hl_order_id=result.get("order_id"),
+                                    hl_fill_price=result.get("fill_price"),
+                                    size_usd=result.get("size_usd"),
+                                    raw_response=result
+                                )
+                                bot_state.active_trades[symbol] = trade_id
+                                logger.debug(f"📝 Trade {symbol} logged as open (ID: {trade_id})")
+
+                            elif operation == "close" and result.get("status") == "ok":
+                                # Log closed trade
+                                if symbol in bot_state.active_trades:
+                                    # Get position info for P&L calculation
+                                    position = next((p for p in open_positions if p["symbol"] == symbol), None)
+                                    entry_price = position.get("entry_price", 0) if position else 0
+                                    exit_price = result.get("fill_price", 0)
+
+                                    # Calculate P&L if not provided
+                                    pnl_usd = result.get("pnl_usd")
+                                    if pnl_usd is None and position:
+                                        size = position.get("size", 0)
+                                        pnl_usd = (exit_price - entry_price) * size
+
+                                    pnl_pct = ((exit_price - entry_price) / entry_price * 100) if entry_price else None
+
+                                    db_utils.close_trade(
+                                        trade_id=bot_state.active_trades[symbol],
+                                        exit_price=exit_price,
+                                        exit_reason="signal",  # AI-driven close
+                                        pnl_usd=pnl_usd,
+                                        pnl_pct=pnl_pct,
+                                        fees_usd=result.get("fees", 0)
+                                    )
+                                    del bot_state.active_trades[symbol]
+                                    logger.debug(f"📝 Trade {symbol} logged as closed")
+                                else:
+                                    logger.warning(f"⚠️ Close operation per {symbol} ma nessun trade attivo tracciato")
+
+                        except Exception as log_err:
+                            logger.warning(f"⚠️ Errore logging executed trade: {log_err}", exc_info=True)
+                            # Continue execution even if logging fails
+
                     else:
                         logger.warning(f"⚠️ Risultato trade: {result}")
 

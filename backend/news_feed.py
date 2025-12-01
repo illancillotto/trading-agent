@@ -1,10 +1,11 @@
 import logging
 import re
-from datetime import timezone
+from datetime import timezone, datetime
 from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import List
 import xml.etree.ElementTree as ET
+from functools import lru_cache
 
 import requests
 
@@ -22,7 +23,12 @@ def _strip_html_tags(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
-def fetch_latest_news(max_chars: int = 4000) -> str:
+@lru_cache(maxsize=10)
+def _fetch_news_cached(cache_key: str, max_chars: int) -> str:
+    """
+    Internal function to fetch news with caching.
+    cache_key depends on time to invalidate cache periodically.
+    """
     try:
         response = requests.get(NEWS_FEED_URL, timeout=10)
         if response.status_code != 200:
@@ -93,3 +99,15 @@ def fetch_latest_news(max_chars: int = 4000) -> str:
     except Exception as err:  # noqa: BLE001
         logger.warning("Failed to process news feed: %s", err)
         return f"Failed to process news feed: {err}"
+
+
+def fetch_latest_news(max_chars: int = 4000) -> str:
+    """
+    Fetches latest news with 30-minute caching strategy.
+    """
+    # Generate cache key that changes every 30 minutes
+    now = datetime.utcnow()
+    # Key format: YYYYMMDDHH_MMgroup where MMgroup is 0 or 1 (for 0-29, 30-59)
+    cache_key = f"{now.strftime('%Y%m%d%H')}_{now.minute // 30}"
+    
+    return _fetch_news_cached(cache_key, max_chars)

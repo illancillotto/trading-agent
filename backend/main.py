@@ -109,6 +109,42 @@ class BotOperation(BaseModel):
     system_prompt: Optional[str]
 
 
+class ExecutedTrade(BaseModel):
+    id: int
+    created_at: datetime
+    bot_operation_id: Optional[int]
+    trade_type: str
+    symbol: str
+    direction: str
+    entry_price: Optional[float]
+    exit_price: Optional[float]
+    size: float
+    size_usd: Optional[float]
+    leverage: Optional[int]
+    stop_loss_price: Optional[float]
+    take_profit_price: Optional[float]
+    exit_reason: Optional[str]
+    pnl_usd: Optional[float]
+    pnl_pct: Optional[float]
+    duration_minutes: Optional[int]
+    status: str
+    closed_at: Optional[datetime]
+    fees_usd: Optional[float]
+
+
+class TradeStatistics(BaseModel):
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    total_pnl: float
+    avg_pnl: float
+    best_trade: float
+    worst_trade: float
+    avg_duration_minutes: Optional[float]
+    total_fees: float
+
+
 # =====================
 # Endpoint API Dashboard
 # =====================
@@ -261,6 +297,256 @@ async def get_bot_operations(
         return operations
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore nel recupero delle operazioni: {str(e)}")
+
+
+# =====================
+# Trade History API Endpoints
+# =====================
+
+@app.get("/api/trades", response_model=List[ExecutedTrade])
+async def get_trades(
+    page: int = Query(1, ge=1, description="Numero di pagina (1-based)"),
+    limit: int = Query(50, ge=1, le=500, description="Numero di trades per pagina"),
+    symbol: Optional[str] = Query(None, description="Filtra per symbol (es. BTC, ETH)"),
+    direction: Optional[str] = Query(None, description="Filtra per direction (long/short)"),
+    status: Optional[str] = Query(None, description="Filtra per status (open/closed/cancelled)"),
+    date_from: Optional[str] = Query(None, description="Data inizio (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Data fine (YYYY-MM-DD)"),
+) -> List[ExecutedTrade]:
+    """
+    Restituisce la lista dei trades eseguiti con filtri e paginazione.
+
+    Filtri disponibili:
+    - symbol: Filtra per simbolo specifico
+    - direction: Filtra per direzione (long/short)
+    - status: Filtra per stato (open/closed/cancelled)
+    - date_from: Data inizio (formato YYYY-MM-DD)
+    - date_to: Data fine (formato YYYY-MM-DD)
+
+    Paginazione:
+    - page: Numero di pagina (default: 1)
+    - limit: Numero di risultati per pagina (default: 50, max: 500)
+    """
+    try:
+        # Costruisci query con filtri
+        offset = (page - 1) * limit
+
+        query = """
+            SELECT
+                id, created_at, bot_operation_id, trade_type, symbol, direction,
+                entry_price, exit_price, size, size_usd, leverage,
+                stop_loss_price, take_profit_price, exit_reason,
+                pnl_usd, pnl_pct, duration_minutes, status, closed_at, fees_usd
+            FROM executed_trades
+            WHERE 1=1
+        """
+        params = []
+
+        # Aggiungi filtri
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+
+        if direction:
+            query += " AND direction = %s"
+            params.append(direction)
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        if date_from:
+            query += " AND created_at >= %s::date"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND created_at < (%s::date + interval '1 day')"
+            params.append(date_to)
+
+        # Ordina per data (più recenti prima) e aggiungi paginazione
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                rows = cur.fetchall()
+
+        trades = []
+        for row in rows:
+            trades.append(
+                ExecutedTrade(
+                    id=row[0],
+                    created_at=row[1],
+                    bot_operation_id=row[2],
+                    trade_type=row[3],
+                    symbol=row[4],
+                    direction=row[5],
+                    entry_price=float(row[6]) if row[6] is not None else None,
+                    exit_price=float(row[7]) if row[7] is not None else None,
+                    size=float(row[8]),
+                    size_usd=float(row[9]) if row[9] is not None else None,
+                    leverage=row[10],
+                    stop_loss_price=float(row[11]) if row[11] is not None else None,
+                    take_profit_price=float(row[12]) if row[12] is not None else None,
+                    exit_reason=row[13],
+                    pnl_usd=float(row[14]) if row[14] is not None else None,
+                    pnl_pct=float(row[15]) if row[15] is not None else None,
+                    duration_minutes=row[16],
+                    status=row[17],
+                    closed_at=row[18],
+                    fees_usd=float(row[19]) if row[19] is not None else None,
+                )
+            )
+
+        return trades
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore nel recupero dei trades: {str(e)}")
+
+
+@app.get("/api/trades/stats", response_model=TradeStatistics)
+async def get_trade_stats(
+    symbol: Optional[str] = Query(None, description="Filtra per symbol (es. BTC, ETH)"),
+    days: int = Query(30, ge=1, le=365, description="Numero di giorni da includere"),
+) -> TradeStatistics:
+    """
+    Restituisce statistiche aggregate sui trades.
+
+    Parametri:
+    - symbol: Calcola statistiche per un simbolo specifico (opzionale)
+    - days: Numero di giorni da includere nell'analisi (default: 30)
+
+    Ritorna:
+    - total_trades: Numero totale di trades
+    - winning_trades: Numero di trades profittevoli
+    - losing_trades: Numero di trades in perdita
+    - win_rate: Percentuale di trades vincenti
+    - total_pnl: P&L totale in USD
+    - avg_pnl: P&L medio per trade
+    - best_trade: Miglior trade (P&L più alto)
+    - worst_trade: Peggior trade (P&L più basso)
+    - avg_duration_minutes: Durata media dei trades
+    - total_fees: Fees totali pagate
+    """
+    try:
+        query = """
+            SELECT
+                COUNT(*) as total_trades,
+                COUNT(*) FILTER (WHERE pnl_usd > 0) as winning_trades,
+                COUNT(*) FILTER (WHERE pnl_usd < 0) as losing_trades,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE pnl_usd > 0) / NULLIF(COUNT(*), 0), 2) as win_rate,
+                COALESCE(SUM(pnl_usd), 0) as total_pnl,
+                COALESCE(AVG(pnl_usd), 0) as avg_pnl,
+                COALESCE(MAX(pnl_usd), 0) as best_trade,
+                COALESCE(MIN(pnl_usd), 0) as worst_trade,
+                AVG(duration_minutes) as avg_duration_minutes,
+                COALESCE(SUM(fees_usd), 0) as total_fees
+            FROM executed_trades
+            WHERE status = 'closed'
+                AND pnl_usd IS NOT NULL
+                AND created_at >= NOW() - INTERVAL '%s days'
+        """
+        params = [days]
+
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                row = cur.fetchone()
+
+        if not row or row[0] == 0:
+            # Nessun trade trovato, ritorna statistiche vuote
+            return TradeStatistics(
+                total_trades=0,
+                winning_trades=0,
+                losing_trades=0,
+                win_rate=0.0,
+                total_pnl=0.0,
+                avg_pnl=0.0,
+                best_trade=0.0,
+                worst_trade=0.0,
+                avg_duration_minutes=None,
+                total_fees=0.0,
+            )
+
+        return TradeStatistics(
+            total_trades=row[0],
+            winning_trades=row[1],
+            losing_trades=row[2],
+            win_rate=float(row[3]) if row[3] is not None else 0.0,
+            total_pnl=float(row[4]),
+            avg_pnl=float(row[5]),
+            best_trade=float(row[6]),
+            worst_trade=float(row[7]),
+            avg_duration_minutes=float(row[8]) if row[8] is not None else None,
+            total_fees=float(row[9]),
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore nel recupero delle statistiche: {str(e)}")
+
+
+@app.get("/api/trades/{trade_id}", response_model=ExecutedTrade)
+async def get_trade_by_id(trade_id: int) -> ExecutedTrade:
+    """
+    Restituisce i dettagli di un singolo trade.
+
+    Parametri:
+    - trade_id: ID del trade da recuperare
+
+    Ritorna:
+    - Dettagli completi del trade
+    """
+    try:
+        query = """
+            SELECT
+                id, created_at, bot_operation_id, trade_type, symbol, direction,
+                entry_price, exit_price, size, size_usd, leverage,
+                stop_loss_price, take_profit_price, exit_reason,
+                pnl_usd, pnl_pct, duration_minutes, status, closed_at, fees_usd
+            FROM executed_trades
+            WHERE id = %s
+        """
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (trade_id,))
+                row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Trade con ID {trade_id} non trovato")
+
+        return ExecutedTrade(
+            id=row[0],
+            created_at=row[1],
+            bot_operation_id=row[2],
+            trade_type=row[3],
+            symbol=row[4],
+            direction=row[5],
+            entry_price=float(row[6]) if row[6] is not None else None,
+            exit_price=float(row[7]) if row[7] is not None else None,
+            size=float(row[8]),
+            size_usd=float(row[9]) if row[9] is not None else None,
+            leverage=row[10],
+            stop_loss_price=float(row[11]) if row[11] is not None else None,
+            take_profit_price=float(row[12]) if row[12] is not None else None,
+            exit_reason=row[13],
+            pnl_usd=float(row[14]) if row[14] is not None else None,
+            pnl_pct=float(row[15]) if row[15] is not None else None,
+            duration_minutes=row[16],
+            status=row[17],
+            closed_at=row[18],
+            fees_usd=float(row[19]) if row[19] is not None else None,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore nel recupero del trade: {str(e)}")
 
 
 # =====================

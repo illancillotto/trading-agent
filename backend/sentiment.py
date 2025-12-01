@@ -2,6 +2,8 @@ import requests
 import time
 import os
 import json
+from functools import lru_cache
+from datetime import datetime
 # load dotenv
 from dotenv import load_dotenv
 load_dotenv()
@@ -21,10 +23,10 @@ INTERVALLO_SECONDI = 3 * 60
 
 # --- Funzione per chiamare l'API ---
 
-def get_latest_fear_and_greed():
+@lru_cache(maxsize=10)
+def _get_latest_fear_and_greed_cached(cache_key: str):
     """
-    Chiama l'API di CoinMarketCap per ottenere l'ultimo valore 
-    del Fear & Greed Index.
+    Cached version of API call.
     """
     if not API_KEY:
         print("Errore: La variabile d'ambiente CMC_PRO_API_KEY non è impostata.")
@@ -78,6 +80,16 @@ def get_latest_fear_and_greed():
     
     return None
 
+
+def get_latest_fear_and_greed():
+    """
+    Wrapper to handle caching key generation (30 min cache).
+    """
+    now = datetime.utcnow()
+    cache_key = f"{now.strftime('%Y%m%d%H')}_{now.minute // 30}"
+    return _get_latest_fear_and_greed_cached(cache_key)
+
+
 # get sentiment
 def get_sentiment() -> str:
     """
@@ -92,4 +104,4 @@ def get_sentiment() -> str:
             f"  Timestamp: {sentiment_data['timestamp']}"
         ), sentiment_data
     else:
-        return "Impossibile recuperare il sentiment del mercato."
+        return "Impossibile recuperare il sentiment del mercato.", {}

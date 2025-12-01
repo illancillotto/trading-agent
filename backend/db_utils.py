@@ -182,6 +182,38 @@ CREATE TABLE IF NOT EXISTS errors (
 
 CREATE INDEX IF NOT EXISTS idx_errors_created_at
     ON errors(created_at);
+
+CREATE TABLE IF NOT EXISTS executed_trades (
+    id                  BIGSERIAL PRIMARY KEY,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    bot_operation_id    BIGINT REFERENCES bot_operations(id),
+    trade_type          TEXT NOT NULL,
+    symbol              TEXT NOT NULL,
+    direction           TEXT NOT NULL,
+    entry_price         NUMERIC(20, 8),
+    exit_price          NUMERIC(20, 8),
+    size                NUMERIC(20, 8) NOT NULL,
+    size_usd            NUMERIC(20, 4),
+    leverage            INTEGER,
+    stop_loss_price     NUMERIC(20, 8),
+    take_profit_price   NUMERIC(20, 8),
+    exit_reason         TEXT,
+    pnl_usd             NUMERIC(20, 4),
+    pnl_pct             NUMERIC(10, 4),
+    duration_minutes    INTEGER,
+    hl_order_id         TEXT,
+    hl_fill_price       NUMERIC(20, 8),
+    status              TEXT NOT NULL DEFAULT 'open',
+    closed_at           TIMESTAMPTZ,
+    fees_usd            NUMERIC(10, 4),
+    slippage_pct        NUMERIC(10, 4),
+    raw_response        JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_executed_trades_symbol ON executed_trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_executed_trades_status ON executed_trades(status);
+CREATE INDEX IF NOT EXISTS idx_executed_trades_created_at ON executed_trades(created_at);
+CREATE INDEX IF NOT EXISTS idx_executed_trades_direction ON executed_trades(direction);
 """
 
 
@@ -860,6 +892,230 @@ def get_recent_bot_operations(limit: int = 50) -> List[Dict[str, Any]]:
             )
             rows = cur.fetchall()
             return [r[0] for r in rows]
+
+
+# =====================
+# Trade History Functions
+# =====================
+
+
+def log_executed_trade(
+    bot_operation_id: Optional[int],
+    trade_type: str,
+    symbol: str,
+    direction: str,
+    size: float,
+    entry_price: Optional[float] = None,
+    leverage: Optional[int] = None,
+    stop_loss_price: Optional[float] = None,
+    take_profit_price: Optional[float] = None,
+    hl_order_id: Optional[str] = None,
+    hl_fill_price: Optional[float] = None,
+    size_usd: Optional[float] = None,
+    raw_response: Optional[Dict] = None
+) -> int:
+    """
+    Log a trade executed on Hyperliquid.
+
+    Args:
+        bot_operation_id: Reference to the AI decision
+        trade_type: 'open', 'close', or 'partial_close'
+        symbol: Trading symbol (e.g., 'BTC')
+        direction: 'long' or 'short'
+        size: Position size
+        entry_price: Entry price
+        leverage: Leverage used
+        stop_loss_price: Stop loss price
+        take_profit_price: Take profit price
+        hl_order_id: Hyperliquid order ID
+        hl_fill_price: Actual fill price from Hyperliquid
+        size_usd: Position size in USD
+        raw_response: Raw response from Hyperliquid
+
+    Returns:
+        trade_id: ID of the logged trade
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO executed_trades (
+                    bot_operation_id, trade_type, symbol, direction,
+                    size, entry_price, leverage,
+                    stop_loss_price, take_profit_price,
+                    hl_order_id, hl_fill_price, size_usd,
+                    raw_response, status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'open')
+                RETURNING id;
+                """,
+                (
+                    bot_operation_id, trade_type, symbol, direction,
+                    size, entry_price, leverage,
+                    stop_loss_price, take_profit_price,
+                    hl_order_id, hl_fill_price, size_usd,
+                    Json(raw_response) if raw_response else None
+                )
+            )
+            trade_id = cur.fetchone()[0]
+        conn.commit()
+
+    return trade_id
+
+
+def close_trade(
+    trade_id: int,
+    exit_price: float,
+    exit_reason: str,
+    pnl_usd: Optional[float] = None,
+    pnl_pct: Optional[float] = None,
+    fees_usd: Optional[float] = 0,
+    slippage_pct: Optional[float] = None
+) -> None:
+    """
+    Close a trade and record the outcome.
+
+    Args:
+        trade_id: ID of the trade to close
+        exit_price: Exit price
+        exit_reason: Reason for exit ('take_profit', 'stop_loss', 'manual', 'signal', etc.)
+        pnl_usd: Realized profit/loss in USD
+        pnl_pct: Profit/loss percentage
+        fees_usd: Trading fees
+        slippage_pct: Slippage percentage
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE executed_trades
+                SET
+                    exit_price = %s,
+                    exit_reason = %s,
+                    pnl_usd = %s,
+                    pnl_pct = %s,
+                    fees_usd = %s,
+                    slippage_pct = %s,
+                    status = 'closed',
+                    closed_at = NOW(),
+                    duration_minutes = EXTRACT(EPOCH FROM (NOW() - created_at)) / 60
+                WHERE id = %s;
+                """,
+                (exit_price, exit_reason, pnl_usd, pnl_pct, fees_usd, slippage_pct, trade_id)
+            )
+        conn.commit()
+
+
+def get_open_trades(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Get all currently open trades.
+
+    Args:
+        symbol: Optional symbol filter
+
+    Returns:
+        List of open trades
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT id, created_at, symbol, direction, size, entry_price,
+                       leverage, stop_loss_price, take_profit_price, hl_order_id
+                FROM executed_trades
+                WHERE status = 'open'
+            """
+            params = []
+
+            if symbol:
+                query += " AND symbol = %s"
+                params.append(symbol)
+
+            query += " ORDER BY created_at DESC"
+
+            cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+
+def get_trade_by_symbol(symbol: str, status: str = 'open') -> Optional[Dict[str, Any]]:
+    """
+    Get the most recent trade for a symbol with a specific status.
+
+    Args:
+        symbol: Trading symbol
+        status: Trade status ('open', 'closed')
+
+    Returns:
+        Trade dict or None
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, symbol, direction, size, entry_price,
+                       leverage, stop_loss_price, take_profit_price,
+                       exit_price, pnl_usd, pnl_pct, status
+                FROM executed_trades
+                WHERE symbol = %s AND status = %s
+                ORDER BY created_at DESC
+                LIMIT 1;
+                """,
+                (symbol, status)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                return None
+
+            columns = [desc[0] for desc in cur.description]
+            return dict(zip(columns, row))
+
+
+def get_trade_statistics(
+    symbol: Optional[str] = None,
+    days: int = 30
+) -> Dict[str, Any]:
+    """
+    Get trade statistics for analysis.
+
+    Args:
+        symbol: Optional symbol filter
+        days: Number of days to look back
+
+    Returns:
+        Statistics dict
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    COUNT(*) as total_trades,
+                    COUNT(*) FILTER (WHERE pnl_usd > 0) as winning_trades,
+                    COUNT(*) FILTER (WHERE pnl_usd < 0) as losing_trades,
+                    COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE pnl_usd > 0) /
+                             NULLIF(COUNT(*) FILTER (WHERE status = 'closed'), 0), 2), 0) as win_rate,
+                    COALESCE(ROUND(SUM(pnl_usd)::numeric, 2), 0) as total_pnl,
+                    COALESCE(ROUND(AVG(pnl_usd)::numeric, 2), 0) as avg_pnl,
+                    COALESCE(ROUND(MAX(pnl_usd)::numeric, 2), 0) as best_trade,
+                    COALESCE(ROUND(MIN(pnl_usd)::numeric, 2), 0) as worst_trade,
+                    COALESCE(ROUND(AVG(duration_minutes)::numeric, 0), 0) as avg_duration_min
+                FROM executed_trades
+                WHERE status = 'closed'
+                  AND created_at > NOW() - INTERVAL '%s days'
+            """ % days
+
+            params = []
+
+            if symbol:
+                query = query.replace("WHERE status", "WHERE symbol = %s AND status")
+                params.insert(0, symbol)
+
+            cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            row = cur.fetchone()
+
+            return dict(zip(columns, row)) if row else {}
 
 
 if __name__ == "__main__":
