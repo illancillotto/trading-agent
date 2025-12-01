@@ -62,7 +62,8 @@ CONFIG = {
 
     # Coin Screening
     "SCREENING_ENABLED": True,  # Set to True to enable dynamic coin selection
-    "TOP_N_COINS": 15,
+    "TOP_N_COINS": 20,          # Aumentato per avere più pool di scelta
+    "ANALYSIS_BATCH_SIZE": 5,   # Quante coin analizzare per ciclo (rotazione)
     "REBALANCE_DAY": "sunday",
     "FALLBACK_TICKERS": ["BTC", "ETH", "SOL"],  # Used if screening fails or disabled
 
@@ -138,6 +139,7 @@ class BotState:
         self.screener: Optional[CoinScreener] = None
         self.trend_engine: Optional[TrendConfirmationEngine] = None
         self.active_trades: dict[str, int] = {}  # symbol -> trade_id mapping
+        self.rotation_index: int = 0             # Indice per rotazione coin
         self.initialized: bool = False
         self.last_error: Optional[str] = None
 
@@ -288,10 +290,43 @@ def trading_cycle() -> None:
                         pass  # Continua con get_selected_coins che userà cache
 
                 # Ottieni top coins (da cache se disponibile)
-                selected_coins = screener.get_selected_coins(top_n=CONFIG["TOP_N_COINS"])
-                if selected_coins:
-                    tickers = [coin.symbol for coin in selected_coins]
-                    logger.info(f"🎯 Trading su: {', '.join(tickers)}")
+                all_selected_coins = screener.get_selected_coins(top_n=CONFIG["TOP_N_COINS"])
+                
+                if all_selected_coins:
+                    # LOGICA DI ROTAZIONE E COPERTURA
+                    # 1. Identifica coin in portafoglio (da analizzare SEMPRE per gestire chiusure)
+                    held_symbols = set(bot_state.active_trades.keys())
+                    
+                    # 2. Identifica candidati disponibili (escludendo quelli già in portafoglio)
+                    candidates = [c.symbol for c in all_selected_coins if c.symbol not in held_symbols]
+                    
+                    # 3. Seleziona batch corrente
+                    batch_size = CONFIG.get("ANALYSIS_BATCH_SIZE", 5)
+                    batch_candidates = []
+                    
+                    if candidates:
+                        start_idx = bot_state.rotation_index % len(candidates)
+                        end_idx = start_idx + batch_size
+                        
+                        # Gestione overflow lista (wrap-around)
+                        if end_idx <= len(candidates):
+                            batch_candidates = candidates[start_idx:end_idx]
+                        else:
+                            # Prendi fino alla fine e ricomincia dall'inizio
+                            batch_candidates = candidates[start_idx:] + candidates[:end_idx - len(candidates)]
+                            
+                        # Aggiorna indice per il prossimo ciclo
+                        # Avanziamo solo se abbiamo effettivamente preso dei candidati
+                        bot_state.rotation_index = (start_idx + batch_size) % len(candidates)
+                    
+                    # 4. Costruisci lista finale: Held Coins + Batch Rotation
+                    tickers = list(held_symbols) + batch_candidates
+                    
+                    # Rimuovi eventuali duplicati e ordina per coerenza
+                    tickers = sorted(list(set(tickers)))
+                    
+                    logger.info(f"🎯 Trading su {len(tickers)} coin (Held: {len(held_symbols)}, Batch: {len(batch_candidates)})")
+                    logger.info(f"   Tickers: {', '.join(tickers)}")
                 else:
                     # Nessun dato disponibile, usa fallback
                     raise ValueError("Nessun dato disponibile dal screener")
@@ -677,6 +712,11 @@ Trend Analysis for {symbol}:
         elif not trend_check_passed:
             logger.warning(f"⛔ Trade bloccato: trend check non superato")
             result = {"status": "blocked", "reason": "Trend confirmation failed"}
+
+        # Check per posizioni esistenti (evita duplicati)
+        elif operation == "open" and any(p.get('symbol') == symbol for p in open_positions):
+            logger.warning(f"⛔ Trade bloccato: Posizione già aperta su {symbol}")
+            result = {"status": "blocked", "reason": f"Position already open for {symbol}"}
 
         else:
             # Verifica con risk manager
