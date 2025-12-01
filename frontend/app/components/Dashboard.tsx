@@ -129,10 +129,10 @@ export function Dashboard() {
       </div>
 
       {/* Main Grid Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1.8fr_1fr] gap-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_450px] 2xl:grid-cols-[1.5fr_500px] gap-6 items-start">
 
         {/* Left Column */}
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
 
           {/* Performance Overview */}
           <PerformanceOverview balance={balance} />

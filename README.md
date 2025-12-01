@@ -12,6 +12,25 @@ Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.a
 - **Ispirazione Alpha Arena**: il progetto prende spunto dall'approccio competitivo e AI-driven di Alpha Arena, con l'obiettivo di creare agenti sempre più performanti.
 - **Gestione multi-modello AI**: supporta GPT-5.1, GPT-4o-mini e DeepSeek con selezione dinamica.
 
+## 📊 Dashboard Web
+
+Il progetto include una moderna dashboard web (React/Vite) per il monitoraggio in tempo reale.
+
+### Caratteristiche Dashboard (v0.1.0)
+- **Performance Overview**: Saldo, PnL e metriche chiave.
+- **Market Data**: Dati di mercato aggregati e spread.
+- **Operazioni AI**: Log delle decisioni dell'agente con ragionamento e forecast.
+- **System Logs**: Log di sistema in tempo reale.
+- **Gestione Posizioni**: Visualizzazione posizioni aperte e storico chiuse.
+
+Per avviare la dashboard:
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+La dashboard sarà accessibile a `http://localhost:5621`.
+
 ## Configurazione
 
 ### Setup iniziale
