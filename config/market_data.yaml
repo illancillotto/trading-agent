@@ -1,0 +1,19 @@
+# Configurazione Market Data Aggregator
+# Elenco dei provider da caricare dalla cartella backend/market_data/exchanges/
+
+providers:
+  - binance
+  - bybit
+  - okx
+  - coinbase
+  - kraken
+  - bitget
+  - gate
+  - kucoin
+  - htx
+  - mexc
+  - crypto_com
+  - bingx
+  #- uniswap
+
+timeout: 5  # Timeout globale in secondi per le richieste

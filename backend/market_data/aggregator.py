@@ -80,30 +80,30 @@ class MarketDataAggregator:
     def _init_providers(self):
         """
         Dynamically load and initialize configured providers.
-        Expects providers to be in backend/market_data/{name}.py
+        Expects providers to be in backend/market_data/exchanges/{name}.py
         """
         for provider_name in self.config.get("providers", []):
             try:
-                # Construct module path (e.g., backend.market_data.binance)
-                module_path = f"backend.market_data.{provider_name}"
+                # Construct module path (e.g., backend.market_data.exchanges.binance)
+                module_path = f"backend.market_data.exchanges.{provider_name}"
                 
                 try:
                     module = importlib.import_module(module_path)
                 except ImportError:
                     # Try relative import if we are inside the package
-                    module = importlib.import_module(f".{provider_name}", package="backend.market_data")
+                    module = importlib.import_module(f".exchanges.{provider_name}", package="backend.market_data")
                 
                 # Convention: Class name is Capitalized name + "Provider" (e.g. BinanceProvider)
-                class_name = f"{provider_name.capitalize()}Provider"
+                # Special handling for names with underscore (crypto_com -> CryptoComProvider)
+                class_name = "".join(x.capitalize() for x in provider_name.split("_")) + "Provider"
                 
                 if hasattr(module, class_name):
                     provider_class = getattr(module, class_name)
                     
                     # Instantiate provider
-                    # We assume a standard init or no-arg init for now
                     provider_instance = provider_class()
                     
-                    # Check availability (API keys, connectivity)
+                    # Check availability
                     is_available = True
                     if hasattr(provider_instance, "check_availability"):
                         is_available = provider_instance.check_availability()
@@ -124,21 +124,10 @@ class MarketDataAggregator:
     async def fetch_market_snapshot(self, symbol: str) -> Dict[str, Any]:
         """
         Main entry point: Fetch market data from all sources and aggregate.
-        
-        Args:
-            symbol: The trading pair symbol (e.g., "BTC", "ETH")
-            
-        Returns:
-            JSON-compatible dictionary with:
-            - timestamp
-            - global_market (aggregates)
-            - hyperliquid (primary exchange data)
-            - providers (raw data from other sources)
         """
         timestamp = datetime.now(timezone.utc).isoformat()
         
         # 1. Fetch Hyperliquid Data (Primary Source)
-        # We run this concurrently with others
         hl_task = self._fetch_hyperliquid_data(symbol)
         
         # 2. Fetch External Providers
@@ -149,14 +138,11 @@ class MarketDataAggregator:
             provider_names.append(name)
             provider_tasks.append(self._safe_fetch_provider(name, provider, symbol))
             
-        # Execute all requests in parallel
-        # Gather returns a list of results in order
         all_results = await asyncio.gather(hl_task, *provider_tasks, return_exceptions=True)
         
         hl_data = all_results[0]
         provider_results = all_results[1:]
         
-        # Process provider results
         providers_data = {}
         for i, result in enumerate(provider_results):
             name = provider_names[i]
@@ -168,7 +154,6 @@ class MarketDataAggregator:
             else:
                 providers_data[name] = None
 
-        # Handle Hyperliquid result
         if isinstance(hl_data, Exception):
             logger.error(f"Hyperliquid fetch failed: {hl_data}")
             hl_data = {"error": str(hl_data)}
@@ -185,14 +170,11 @@ class MarketDataAggregator:
         }
 
     async def _fetch_hyperliquid_data(self, symbol: str) -> Dict[str, Any]:
-        """Fetch specific metrics from Hyperliquid provider."""
         if not self.hyperliquid:
             return {"error": "Provider not initialized"}
             
         try:
-            # Run blocking call in executor
             loop = asyncio.get_running_loop()
-            # get_coin_metrics is synchronous in current implementation
             metrics = await loop.run_in_executor(None, self.hyperliquid.get_coin_metrics, symbol)
             
             if metrics:
@@ -212,14 +194,9 @@ class MarketDataAggregator:
             raise e
 
     async def _safe_fetch_provider(self, name: str, provider: Any, symbol: str) -> Optional[Dict[str, Any]]:
-        """
-        Safely fetch data from a provider using the common interface.
-        Expected interface: async get_market_data(symbol) -> dict
-        """
         try:
             method_name = "get_market_data"
             if not hasattr(provider, method_name):
-                # Fallback to fetch_ticker if get_market_data doesn't exist
                 method_name = "fetch_ticker"
                 if not hasattr(provider, method_name):
                     return {"error": "Method not implemented"}
@@ -239,22 +216,16 @@ class MarketDataAggregator:
             return {"error": str(e)}
 
     def _calculate_aggregates(self, hl_data: Dict, providers_data: Dict) -> Dict[str, Any]:
-        """
-        Calculate global market stats (avg price, total volume, etc.)
-        and compare Hyperliquid against the global average.
-        """
         prices = []
         volumes = []
         funding_rates = []
         
-        # Collect valid data points
         all_sources = [hl_data] + list(providers_data.values())
         
         for data in all_sources:
             if not isinstance(data, dict) or "error" in data:
                 continue
                 
-            # Extract Price
             p = data.get("price") or data.get("last") or data.get("close")
             if p and isinstance(p, (int, float, str)):
                 try:
@@ -262,7 +233,6 @@ class MarketDataAggregator:
                 except ValueError:
                     pass
 
-            # Extract Volume
             v = data.get("volume_24h") or data.get("volume")
             if v and isinstance(v, (int, float, str)):
                 try:
@@ -270,7 +240,6 @@ class MarketDataAggregator:
                 except ValueError:
                     pass
             
-            # Extract Funding
             f = data.get("funding_rate")
             if f and isinstance(f, (int, float, str)):
                 try:
@@ -285,7 +254,6 @@ class MarketDataAggregator:
         total_volume = sum(volumes)
         avg_funding = sum(funding_rates) / len(funding_rates) if funding_rates else 0.0
         
-        # Calculate Hyperliquid deviation
         hl_price = None
         hl_deviation = None
         if isinstance(hl_data, dict) and "price" in hl_data:
@@ -305,7 +273,6 @@ class MarketDataAggregator:
             "is_hyperliquid_premium": hl_deviation > 0 if hl_deviation is not None else None
         }
 
-# Simple test block to verify functionality
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
@@ -322,4 +289,3 @@ if __name__ == "__main__":
         print(json.dumps(snapshot, indent=2, default=str))
 
     asyncio.run(main())
-
