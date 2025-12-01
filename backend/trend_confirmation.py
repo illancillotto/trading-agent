@@ -47,11 +47,13 @@ class TrendConfirmation:
     daily_trend: Optional[TrendDirection] = None
     hourly_trend: Optional[TrendDirection] = None
     m15_trend: Optional[TrendDirection] = None
+    m5_trend: Optional[TrendDirection] = None  # Added 5m support
 
     # Supporting data
     daily_adx: Optional[float] = None
     hourly_rsi: Optional[float] = None
     m15_macd_signal: Optional[str] = None
+    m5_ema_check: Optional[str] = None # "bullish", "bearish", "neutral"
 
     # Trading recommendation
     should_trade: bool = False
@@ -124,16 +126,19 @@ class TrendConfirmationEngine:
             # 3. Get 15m trend
             m15 = self._analyze_15m(symbol)
 
+            # 3b. Get 5m trend (Trigger)
+            m5 = self._analyze_5m(symbol)
+
             # 4. Calculate alignment and confidence
             direction, quality, confidence = self._calculate_alignment(
-                daily, hourly, m15
+                daily, hourly, m15, m5
             )
 
             # 5. Determine if we should trade
             should_trade = self._should_trade(quality, confidence, hourly)
 
-            # 6. Determine entry quality
-            entry_quality = self._assess_entry_quality(m15, direction)
+            # 6. Determine entry quality (now using 5m too)
+            entry_quality = self._assess_entry_quality(m15, m5, direction)
 
             # 7. Determine recommended direction
             recommended_direction = None
@@ -150,9 +155,11 @@ class TrendConfirmationEngine:
                 daily_trend=daily.get('direction'),
                 hourly_trend=hourly.get('direction'),
                 m15_trend=m15.get('direction'),
+                m5_trend=m5.get('direction'),
                 daily_adx=daily.get('adx'),
                 hourly_rsi=hourly.get('rsi'),
                 m15_macd_signal=m15.get('macd_signal'),
+                m5_ema_check=m5.get('ema_signal'),
                 should_trade=should_trade,
                 recommended_direction=recommended_direction,
                 entry_quality=entry_quality
@@ -309,11 +316,55 @@ class TrendConfirmationEngine:
             'near_ema': distance_to_ema < 0.5  # Within 0.5% of EMA
         }
 
+    def _analyze_5m(self, symbol: str) -> Dict:
+        """
+        Analyze 5-minute timeframe for immediate trigger.
+        Uses EMA(9) and RSI(14).
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Dictionary with 5m trend analysis
+        """
+        df = self._fetch_ohlcv(symbol, '5m', 50)
+
+        if df is None or len(df) < 20:
+            return {'direction': TrendDirection.NEUTRAL, 'ema_signal': 'unknown'}
+
+        # Calculate EMA 9
+        ema_9 = df['close'].ewm(span=9).mean().iloc[-1]
+        current_price = df['close'].iloc[-1]
+        
+        # Calculate RSI 14
+        rsi = self._calculate_rsi(df, 14)
+
+        if current_price > ema_9:
+            direction = TrendDirection.BULLISH
+            ema_signal = "bullish"
+        else:
+            direction = TrendDirection.BEARISH
+            ema_signal = "bearish"
+            
+        # Check for strong momentum/breakout
+        if direction == TrendDirection.BULLISH and rsi > 60:
+            direction = TrendDirection.STRONG_BULLISH
+        elif direction == TrendDirection.BEARISH and rsi < 40:
+            direction = TrendDirection.STRONG_BEARISH
+
+        return {
+            'direction': direction,
+            'ema_9': ema_9,
+            'ema_signal': ema_signal,
+            'rsi': rsi
+        }
+
     def _calculate_alignment(
         self,
         daily: Dict,
         hourly: Dict,
-        m15: Dict
+        m15: Dict,
+        m5: Dict = None
     ) -> Tuple[TrendDirection, TrendQuality, float]:
         """
         Calculate overall trend alignment across timeframes.
@@ -322,6 +373,7 @@ class TrendConfirmationEngine:
             daily: Daily timeframe analysis
             hourly: Hourly timeframe analysis
             m15: 15-minute timeframe analysis
+            m5: 5-minute timeframe analysis (optional)
 
         Returns:
             Tuple of (direction, quality, confidence)
@@ -331,6 +383,8 @@ class TrendConfirmationEngine:
             hourly.get('direction'),
             m15.get('direction')
         ]
+        if m5:
+            directions.append(m5.get('direction'))
 
         # Count bullish/bearish/neutral
         bullish_count = sum(1 for d in directions if d in [
@@ -341,18 +395,21 @@ class TrendConfirmationEngine:
         ])
 
         # Determine overall direction
-        if bullish_count >= 2:
-            direction = TrendDirection.STRONG_BULLISH if bullish_count == 3 else TrendDirection.BULLISH
-        elif bearish_count >= 2:
-            direction = TrendDirection.STRONG_BEARISH if bearish_count == 3 else TrendDirection.BEARISH
+        total_frames = len(directions)
+        majority = total_frames / 2
+        
+        if bullish_count > majority:
+            direction = TrendDirection.STRONG_BULLISH if bullish_count == total_frames else TrendDirection.BULLISH
+        elif bearish_count > majority:
+            direction = TrendDirection.STRONG_BEARISH if bearish_count == total_frames else TrendDirection.BEARISH
         else:
             direction = TrendDirection.NEUTRAL
 
         # Determine quality
-        if bullish_count == 3 or bearish_count == 3:
+        if bullish_count == total_frames or bearish_count == total_frames:
             quality = TrendQuality.EXCELLENT
             confidence = 0.95
-        elif bullish_count == 2 or bearish_count == 2:
+        elif bullish_count >= (total_frames - 1) or bearish_count >= (total_frames - 1):
             # Check if daily and hourly align (most important)
             daily_hourly_align = (
                 daily.get('direction') in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and
@@ -364,13 +421,17 @@ class TrendConfirmationEngine:
 
             if daily_hourly_align:
                 quality = TrendQuality.GOOD
-                confidence = 0.80
+                confidence = 0.85
             else:
                 quality = TrendQuality.MODERATE
                 confidence = 0.65
         else:
             quality = TrendQuality.POOR
             confidence = 0.40
+            
+        # If 5m aligns with overall direction, boost confidence
+        if m5 and m5.get('direction') == direction and confidence < 0.9:
+             confidence += 0.05
 
         return direction, quality, confidence
 
@@ -410,6 +471,7 @@ class TrendConfirmationEngine:
     def _assess_entry_quality(
         self,
         m15: Dict,
+        m5: Dict,
         direction: TrendDirection
     ) -> str:
         """
@@ -417,27 +479,40 @@ class TrendConfirmationEngine:
 
         Args:
             m15: 15-minute timeframe analysis
+            m5: 5-minute timeframe analysis
             direction: Overall trend direction
 
         Returns:
             Entry quality: "optimal", "acceptable", or "wait"
         """
-        # Optimal: Near EMA with MACD aligned
+        entry_score = 0
+        
+        # 15m Criteria (Weight: 2)
         if m15.get('near_ema'):
-            if (direction in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and
-                m15.get('macd_signal') == 'bullish'):
-                return "optimal"
-            elif (direction in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and
-                  m15.get('macd_signal') == 'bearish'):
-                return "optimal"
+            entry_score += 1
+        
+        if (direction in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and 
+            m15.get('macd_signal') == 'bullish'):
+            entry_score += 2
+        elif (direction in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and 
+              m15.get('macd_signal') == 'bearish'):
+            entry_score += 2
 
-        # Acceptable: MACD aligned but not near EMA
-        if ((direction in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and
-             m15.get('macd_signal') == 'bullish') or
-            (direction in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and
-             m15.get('macd_signal') == 'bearish')):
+        # 5m Criteria (Weight: 1 - Trigger)
+        if m5:
+            if (direction in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and 
+                m5.get('ema_signal') == 'bullish'):
+                entry_score += 1
+            elif (direction in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and 
+                  m5.get('ema_signal') == 'bearish'):
+                entry_score += 1
+
+        # Evaluation
+        if entry_score >= 4:
+            return "optimal"
+        elif entry_score >= 2:
             return "acceptable"
-
+        
         return "wait"
 
     # Helper methods for indicator calculations

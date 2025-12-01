@@ -102,7 +102,7 @@ class HybridForecaster:
     def _fetch_candles(self, coin: str, interval: str, limit: int) -> pd.DataFrame:
         """Recupera le candele da Hyperliquid"""
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        interval_ms = {"15m": 15*60_000, "1h": 60*60_000}[interval]
+        interval_ms = {"5m": 5*60_000, "15m": 15*60_000, "1h": 60*60_000}[interval]
         start_ms = now_ms - limit * interval_ms
 
         data = self.info.candles_snapshot(
@@ -264,10 +264,12 @@ class HybridForecaster:
     def forecast(self, coin: str, interval: str) -> dict:
         """Esegue previsione ibrida ARIMA + LSTM"""
         # Recupera dati
-        if interval == "15m":
-            df = self._fetch_candles(coin, "15m", limit=300)
+        if interval in ["5m", "15m"]:
+            limit = 300
         else:
-            df = self._fetch_candles(coin, "1h", limit=500)
+            limit = 500
+            
+        df = self._fetch_candles(coin, interval, limit=limit)
         
         prices = df["close"].values
         last_price = prices[-1]
@@ -315,7 +317,7 @@ class HybridForecaster:
             "timestamp": current_timestamp
         }
     
-    def forecast_many(self, tickers: list, intervals=("15m", "1h")):
+    def forecast_many(self, tickers: list, intervals=("5m", "15m", "1h")):
         """Esegue previsioni per multiple coppie ticker/interval"""
         results = []
         for coin in tickers:
@@ -353,7 +355,7 @@ class HyperliquidForecaster:
 
     def _fetch_candles(self, coin: str, interval: str, limit: int) -> pd.DataFrame:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        interval_ms = {"15m": 15*60_000, "1h": 60*60_000}[interval]
+        interval_ms = {"5m": 5*60_000, "15m": 15*60_000, "1h": 60*60_000}[interval]
         start_ms = now_ms - limit * interval_ms
 
         data = self.info.candles_snapshot(
@@ -374,7 +376,10 @@ class HyperliquidForecaster:
         return df
 
     def forecast(self, coin: str, interval: str) -> tuple:
-        if interval == "15m":
+        if interval == "5m":
+            df = self._fetch_candles(coin, "5m", limit=200)
+            freq = "5min"
+        elif interval == "15m":
             df = self._fetch_candles(coin, "15m", limit=300)
             freq = "15min"
         else:
@@ -393,7 +398,7 @@ class HyperliquidForecaster:
         # Restituisce sia il forecast che l'ultimo prezzo
         return forecast.tail(1)[["ds", "yhat", "yhat_lower", "yhat_upper"]], last_price
 
-    def forecast_many(self, tickers: list, intervals=("15m", "1h")):
+    def forecast_many(self, tickers: list, intervals=("5m", "15m", "1h")):
         results = []
         for coin in tickers:
             for interval in intervals:
@@ -405,7 +410,12 @@ class HyperliquidForecaster:
                     variazione_pct = ((fc["yhat"] - last_price) / last_price) * 100
                     
                     # Determina il timeframe in italiano
-                    timeframe = "Prossimi 15 Minuti" if interval == "15m" else "Prossima Ora"
+                    if interval == "5m":
+                        timeframe = "Prossimi 5 Minuti"
+                    elif interval == "15m":
+                        timeframe = "Prossimi 15 Minuti"
+                    else:
+                        timeframe = "Prossima Ora"
                     
                     results.append({
                         "Ticker": coin,
@@ -439,7 +449,7 @@ class HyperliquidForecaster:
 
     def get_crypto_forecasts(self, tickers: list):
         """Metodo principale compatibile con il vecchio script"""
-        self._last_results = self.forecast_many(tickers, intervals=("15m", "1h"))
+        self._last_results = self.forecast_many(tickers, intervals=("5m", "15m", "1h"))
         df = pd.DataFrame(self._last_results)
         
         # Rimuovi la colonna error se presente
@@ -519,7 +529,7 @@ def get_crypto_forecasts(tickers=['BTC', 'ETH', 'SOL'], testnet=True, use_hybrid
             # Usa il nuovo forecaster ibrido
             try:
                 forecaster = HybridForecaster(testnet=testnet)
-                results = forecaster.forecast_many(tickers, intervals=("15m", "1h"))
+                results = forecaster.forecast_many(tickers, intervals=("5m", "15m", "1h"))
                 
                 # Formatta output
                 text_output = _format_forecast_text(results)
@@ -557,7 +567,7 @@ def get_crypto_forecasts(tickers=['BTC', 'ETH', 'SOL'], testnet=True, use_hybrid
             warnings.warn("Librerie per modelli ibridi non disponibili. Fallback a Prophet.")
         
         forecaster = HyperliquidForecaster(testnet=testnet)
-        results = forecaster.forecast_many(tickers, intervals=("15m", "1h"))
+        results = forecaster.forecast_many(tickers, intervals=("5m", "15m", "1h"))
         
         # Converti al formato richiesto
         df = pd.DataFrame(results)
@@ -571,7 +581,14 @@ def get_crypto_forecasts(tickers=['BTC', 'ETH', 'SOL'], testnet=True, use_hybrid
                 continue
             
             symbol = row.get("Ticker", "N/A")
-            interval = "15m" if "15 Minuti" in str(row.get("Timeframe", "")) else "1h"
+            tf_raw = str(row.get("Timeframe", ""))
+            if "5 Minuti" in tf_raw:
+                interval = "5m"
+            elif "15 Minuti" in tf_raw:
+                interval = "15m"
+            else:
+                interval = "1h"
+                
             forecast_price = row.get("Previsione", 0)
             pct_change = row.get("Variazione %", 0)
             
@@ -584,7 +601,7 @@ def get_crypto_forecasts(tickers=['BTC', 'ETH', 'SOL'], testnet=True, use_hybrid
         json_output = [
             {
                 "symbol": row.get("Ticker"),
-                "interval": "15m" if "15 Minuti" in str(row.get("Timeframe", "")) else "1h",
+                "interval": "5m" if "5 Minuti" in str(row.get("Timeframe", "")) else ("15m" if "15 Minuti" in str(row.get("Timeframe", "")) else "1h"),
                 "forecast_price": row.get("Previsione"),
                 "pct_change": row.get("Variazione %"),
                 "model_used": "Prophet"
@@ -599,7 +616,7 @@ def get_crypto_forecasts(tickers=['BTC', 'ETH', 'SOL'], testnet=True, use_hybrid
         # Fallback finale
         try:
             forecaster = HyperliquidForecaster(testnet=testnet)
-            results = forecaster.forecast_many(tickers, intervals=("15m", "1h"))
+            results = forecaster.forecast_many(tickers, intervals=("5m", "15m", "1h"))
             df = pd.DataFrame(results)
             return df.to_string(index=False), df.to_json(orient='records')
         except:

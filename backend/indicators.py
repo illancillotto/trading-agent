@@ -162,6 +162,25 @@ class CryptoTechnicalAnalysisHL:
     def get_complete_analysis(self, ticker: str) -> Dict:
         coin = ticker.upper()
 
+        # 0) DATI 5 MINUTI (Short-term trigger)
+        short_term_data = None
+        try:
+            df_5m = self.fetch_ohlcv(coin, "5m", limit=50)
+            # Calcola indicatori veloci per lo sniping
+            df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
+            df_5m["rsi_14"] = self.calculate_rsi(df_5m["close"], 14)
+            
+            current_5m = df_5m.iloc[-1]
+            short_term_data = {
+                "price": current_5m["close"],
+                "ema_9": current_5m["ema_9"],
+                "rsi_14": current_5m["rsi_14"],
+                "volume": current_5m["volume"]
+            }
+        except Exception as e:
+            # Non blocchiamo tutto se fallisce il 5m
+            print(f"Warning: 5m data fetch failed for {ticker}: {e}")
+
         # 1) DATI 15 MINUTI (intraday principale)
         df_15m = self.fetch_ohlcv(coin, "15m", limit=200)
 
@@ -214,6 +233,7 @@ class CryptoTechnicalAnalysisHL:
         result = {
             "ticker": ticker,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "short_term_5m": short_term_data,
             
             "current": {
                 "price": current_15m["close"],
@@ -255,6 +275,15 @@ class CryptoTechnicalAnalysisHL:
         output = f"\n<{data['ticker']}_data>\n"
         output += f"Timestamp: {data['timestamp']} (UTC) (Hyperliquid, 15m)\n"
         output += f"\n"
+
+        # --- NUOVO: Iniettiamo i dati 5m nel testo per l'LLM ---
+        if data.get("short_term_5m"):
+            st = data["short_term_5m"]
+            output += "=== SHORT TERM TRIGGER (5-Minute Timeframe) ===\n"
+            output += f"Current Price: {st['price']:.2f}\n"
+            output += f"EMA(9): {st['ema_9']:.2f} (Price > EMA9 = Bullish Momentum)\n"
+            output += f"RSI(14): {st['rsi_14']:.1f}\n"
+            output += "Use this timeframe ONLY for entry timing (Sniping).\n\n"
 
         curr = data["current"]
         output += (
