@@ -47,7 +47,7 @@ def run_analysis(symbol: str):
 
     # Other data (simplified for manual run)
     logger.info("Fetching news...")
-    news_txt = fetch_latest_news()
+    news_txt = fetch_latest_news(symbols=[symbol])
     
     logger.info("Fetching sentiment...")
     sentiment_txt, sentiment_json = get_sentiment()

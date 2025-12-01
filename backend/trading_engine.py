@@ -319,7 +319,7 @@ def trading_cycle() -> None:
 
         # News
         try:
-            news_txt = fetch_latest_news()
+            news_txt = fetch_latest_news(symbols=tickers)
             logger.info(f"✅ News ({len(news_txt)} caratteri)")
         except Exception as e:
             logger.warning(f"⚠️ Errore news: {e}")
