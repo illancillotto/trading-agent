@@ -29,9 +29,12 @@ class CoinbaseProvider(BaseProvider):
             if "price" not in data:
                 return {}
             
+            price = float(data.get("price", 0))
+            volume_base = float(data.get("volume", 0))
+            
             return {
-                "price": float(data.get("price", 0)),
-                "volume_24h": float(data.get("volume", 0)),
+                "price": price,
+                "volume_24h": volume_base * price, # Normalizzato in USD
                 "funding_rate": None, # Spot non ha funding
                 "open_interest": None,
                 "source": "coinbase_spot"

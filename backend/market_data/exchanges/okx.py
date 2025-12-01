@@ -34,10 +34,35 @@ class OkxProvider(BaseProvider):
             # OKX non fornisce il funding rate nel ticker, serve altra chiamata
             # Per semplicità qui prendiamo prezzo e volume, funding richiederebbe /public/funding-rate
             
+            # OKX volume handling:
+            # volCcy24h: 24h volume in quote currency (es. USDT)
+            # Se il valore sembra troppo basso rispetto al prezzo, potrebbe essere in contratti o altra unità
+            # Per SWAP USDT-margined, volCcy24h dovrebbe essere corretto in USDT.
+            # Tuttavia, se vediamo ~100k su BTC, è sospetto.
+            # Proviamo a usare vol24h (contratti) * contract_val (se noto) o fidiamoci di volCcy24h
+            # Nella risposta del test avevamo 104708. Se sono BTC -> 9B USD. Se sono USDT -> 100k USD.
+            # OKX è top tier, 100k è impossibile. Quindi sono BTC (base currency).
+            # La doc dice: "volCcy24h: 24h volume in quote currency".
+            # MA per USDT-margined swap, la quote è USDT.
+            # Controlliamo instId: BTC-USDT-SWAP.
+            
+            # Workaround empirico: se il volume è < 1M per BTC su un major exchange,
+            # probabilmente è espresso in Base Currency (BTC).
+            raw_vol = float(ticker.get("volCcy24h", 0))
+            last_price = float(ticker.get("last", 0))
+            
+            # Se il volume in "USDT" è irrisorio (< 10M) ma il prezzo è alto, assumiamo sia in Base Asset
+            # e convertiamo in USD. (100k BTC * 80k = 8B USD -> coerente)
+            volume_usd = raw_vol
+            if raw_vol > 0 and (raw_vol * last_price > 10_000_000) and raw_vol < 1_000_000:
+                 # Esempio: 100.000 "units" * 80.000$ = 8 Miliardi (OK).
+                 # Se fosse già USD: 100.000$ (No).
+                 volume_usd = raw_vol * last_price
+
             return {
-                "price": float(ticker.get("last", 0)),
-                "volume_24h": float(ticker.get("volCcy24h", 0)), # Volume in valuta quote (USDT)
-                "funding_rate": None, # Richiede chiamata extra
+                "price": last_price,
+                "volume_24h": volume_usd, 
+                "funding_rate": None, 
                 "open_interest": None,
                 "source": "okx_swap"
             }

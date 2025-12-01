@@ -6,14 +6,14 @@ providers:
   - bybit
   - okx
   - coinbase
-  - kraken
-  - bitget
-  - gate
-  - kucoin
-  - htx
+  #- kraken
+  #- bitget
+  #- gate
+  #- kucoin
+  #- htx
   - mexc
-  - crypto_com
-  - bingx
+  #- crypto_com
+  #- bingx
   #- uniswap
 
 timeout: 5  # Timeout globale in secondi per le richieste
