@@ -58,24 +58,25 @@ export function Dashboard() {
     if (!isRefresh) {
       setLoading(true)
     }
-    
+
     if (retryCount === 0) {
       setError(null)
     }
 
     try {
       const baseUrl = API_BASE_URL || ''
-      const [balanceRes, positionsRes, operationsRes, configRes] = await Promise.all([
+      const [balanceRes, positionsRes, operationsRes, configRes, screenerRes] = await Promise.all([
         fetch(`${baseUrl}/api/balance`),
         fetch(`${baseUrl}/api/open-positions`),
         fetch(`${baseUrl}/api/bot-operations?limit=10`), // Limit to 10 as per screenshot text
-        fetch(`${baseUrl}/api/config`)
+        fetch(`${baseUrl}/api/config`),
+        fetch(`${baseUrl}/api/screener/latest`)
       ])
 
       if (!balanceRes.ok) throw new Error(`Errore nel caricamento del saldo: ${balanceRes.statusText}`)
       if (!positionsRes.ok) throw new Error(`Errore nel caricamento delle posizioni: ${positionsRes.statusText}`)
       if (!operationsRes.ok) throw new Error(`Errore nel caricamento delle operazioni: ${operationsRes.statusText}`)
-      
+
       const [balanceData, positionsData, operationsData] = await Promise.all([
         balanceRes.json(),
         positionsRes.json(),
@@ -85,14 +86,22 @@ export function Dashboard() {
       // Aggiorna i ticker attivi se la chiamata config ha successo
       if (configRes.ok) {
         const configData = await configRes.json()
-        // Se lo screener è attivo prendi da top_n_coins se disponibile nel backend, altrimenti fallback a tickers statici
-        // Ma l'API config ritorna già l'elenco "tickers" corretto che il backend sta usando? 
-        // In realta backend/main.py:686 ritorna CONFIG.get("TICKERS", []) che potrebbe essere statico o dinamico 
-        // Se dinamico, dovremmo esporre i 'selected_coins' attuali. 
-        // Per ora usiamo i tickers ritornati dalla config che sono quelli su cui il bot opera.
-        if (configData.trading && Array.isArray(configData.trading.tickers)) {
-             setActiveTickers(configData.trading.tickers)
+        let tickers = configData.trading?.tickers || ['BTC']
+
+        // Se lo screener è attivo e abbiamo risultati recenti, usa quelli
+        if (configData.coin_screener?.enabled && screenerRes.ok) {
+          try {
+            const screenerData = await screenerRes.json()
+            if (screenerData.selected_coins && Array.isArray(screenerData.selected_coins) && screenerData.selected_coins.length > 0) {
+              // Usa i ticker selezionati dallo screener (già ordinati per score)
+              tickers = screenerData.selected_coins.map((c: any) => c.symbol)
+            }
+          } catch (e) {
+            console.warn('Errore parsing screener data, uso fallback tickers', e)
+          }
         }
+
+        setActiveTickers(tickers)
       }
 
       setBalance(balanceData)
@@ -227,7 +236,7 @@ export function Dashboard() {
           </article>
 
           {/* Market Data Widget */}
-          <MarketData />
+          <MarketData symbols={activeTickers} />
 
           {/* System Configuration */}
           <SystemConfig />

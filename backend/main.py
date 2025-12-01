@@ -667,6 +667,27 @@ async def get_market_data_aggregate(symbol: str = "BTC"):
 
 
 # =====================
+# Coin Screener API Endpoints
+# =====================
+
+@app.get("/api/screener/latest")
+async def get_latest_screener_result():
+    """
+    Restituisce l'ultimo risultato dello screening delle coin.
+    """
+    try:
+        from coin_screener.db_utils import get_latest_screening
+        with get_connection() as conn:
+            result = get_latest_screening(conn)
+        if not result:
+            return {"selected_coins": [], "message": "Nessun dato di screening disponibile"}
+        return result
+    except Exception as e:
+        logger.error(f"Errore nel recupero screening results: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+# =====================
 # System Configuration API Endpoints
 # =====================
 
