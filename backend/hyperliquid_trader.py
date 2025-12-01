@@ -447,6 +447,9 @@ class HyperLiquidTrader:
         # Gestisci il formato corretto dei dati
         asset_positions = data.get("assetPositions", [])
         
+        # DEBUG LOGGING
+        print(f"[DEBUG] Raw assetPositions: {asset_positions}")
+        
         for p in asset_positions:
             # Estrai la posizione dal formato corretto
             if isinstance(p, dict) and "position" in p:

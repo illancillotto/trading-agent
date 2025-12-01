@@ -585,12 +585,16 @@ Circuit breaker: {'ATTIVO' if risk_status['circuit_breaker_active'] else 'inatti
                 )
                 logger.info(f"   Entry quality: {confirmation.entry_quality}")
 
+                # Prepare formatted strings
+                daily_adx_str = f"{confirmation.daily_adx:.1f}" if confirmation.daily_adx is not None else "N/A"
+                hourly_rsi_str = f"{confirmation.hourly_rsi:.1f}" if confirmation.hourly_rsi is not None else "N/A"
+
                 # Store trend info for context
                 trend_info = f"""
 Trend Analysis for {symbol}:
 - Overall: {confirmation.direction.value} [{confirmation.quality.value}] ({confirmation.confidence:.0%})
-- Daily: {confirmation.daily_trend.value if confirmation.daily_trend else 'N/A'} (ADX: {confirmation.daily_adx:.1f if confirmation.daily_adx else 'N/A'})
-- Hourly: {confirmation.hourly_trend.value if confirmation.hourly_trend else 'N/A'} (RSI: {confirmation.hourly_rsi:.1f if confirmation.hourly_rsi else 'N/A'})
+- Daily: {confirmation.daily_trend.value if confirmation.daily_trend else 'N/A'} (ADX: {daily_adx_str})
+- Hourly: {confirmation.hourly_trend.value if confirmation.hourly_trend else 'N/A'} (RSI: {hourly_rsi_str})
 - 15m: {confirmation.m15_trend.value if confirmation.m15_trend else 'N/A'} (MACD: {confirmation.m15_macd_signal})
 - Entry: {confirmation.entry_quality}
 """

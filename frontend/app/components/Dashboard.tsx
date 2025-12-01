@@ -85,6 +85,11 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchData()
+    
+    // Poll every 30 seconds to keep data fresh
+    const intervalId = setInterval(fetchData, 30000)
+    
+    return () => clearInterval(intervalId)
   }, [])
 
   if (loading) {
