@@ -124,7 +124,8 @@ class HardFilterConfig:
     min_volume_24h_usd: float = 50_000_000
     min_market_cap_usd: float = 250_000_000
     min_days_listed: int = 30
-    min_open_interest_usd: float = 10_000_000
+    # OI is not currently available from Hyperliquid API or CoinGecko markets endpoint
+    min_open_interest_usd: float = 0  # Was 10_000_000
     max_spread_pct: float = 0.5
     exclude_stablecoins: bool = True
 

@@ -143,7 +143,7 @@ class HyperliquidDataProvider:
             df = self._fetch_ohlcv(symbol, interval="1d", limit=250)
             
             if df is None or df.empty:
-                logger.warning(f"No OHLCV data for {symbol}")
+                logger.info(f"No OHLCV data for {symbol} - skipping")
                 return None
 
             # Get historical prices for momentum

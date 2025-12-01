@@ -474,6 +474,9 @@ def log_account_status(account_status: Dict[str, Any]) -> int:
 
     open_positions_data = account_status.get("open_positions") or []
 
+    # DEBUG LOG
+    print(f"[DEBUG] log_account_status: balance={balance}, positions={len(open_positions_data)}")
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             # Inserisci lo snapshot dell'account

@@ -196,10 +196,13 @@ async def get_open_positions() -> List[OpenPosition]:
                 )
                 row = cur.fetchone()
                 if not row:
+                    logger.warning("⚠️ Nessuno snapshot trovato in account_snapshots")
                     return []
                 snapshot_id = row[0]
                 snapshot_created_at = row[1]
                 
+                logger.info(f"🔍 Fetching positions for snapshot {snapshot_id} (created {snapshot_created_at})")
+
                 # Posizioni aperte per quello snapshot
                 cur.execute(
                     """
@@ -220,6 +223,7 @@ async def get_open_positions() -> List[OpenPosition]:
                     (snapshot_id,),
                 )
                 rows = cur.fetchall()
+                logger.info(f"✅ Trovate {len(rows)} posizioni per snapshot {snapshot_id}")
         
         return [
             OpenPosition(

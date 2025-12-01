@@ -292,6 +292,7 @@ class CoinScreener:
         hl_metrics = {}
         import time
         consecutive_429 = 0  # Track consecutive 429 errors
+        missing_data_coins = []
         
         for i, symbol in enumerate(symbols):
             # Add delay between requests to avoid rate limiting
@@ -318,6 +319,8 @@ class CoinScreener:
                 if metrics:
                     hl_metrics[symbol] = metrics
                     consecutive_429 = 0  # Reset on success
+                else:
+                    missing_data_coins.append(symbol)
             except ClientError as e:
                 error_args = e.args[0] if e.args else None
                 if isinstance(error_args, tuple) and len(error_args) > 0 and error_args[0] == 429:
@@ -332,6 +335,9 @@ class CoinScreener:
                 logger.warning(f"Failed to fetch metrics for {symbol}: {e}")
                 # Continue with next symbol instead of failing completely
                 continue
+
+        if missing_data_coins:
+            logger.info(f"⚠️ Excluded {len(missing_data_coins)} coins due to missing market data (OHLCV): {', '.join(missing_data_coins[:10])}...")
 
         # Fetch CoinGecko data
         logger.info("Fetching CoinGecko market data...")
