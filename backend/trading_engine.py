@@ -625,6 +625,7 @@ Circuit breaker: {'ATTIVO' if risk_status['circuit_breaker_active'] else 'inatti
                 # Prepare formatted strings
                 daily_adx_str = f"{confirmation.daily_adx:.1f}" if confirmation.daily_adx is not None else "N/A"
                 hourly_rsi_str = f"{confirmation.hourly_rsi:.1f}" if confirmation.hourly_rsi is not None else "N/A"
+                m5_ema_signal = confirmation.m5_ema_check if confirmation.m5_ema_check else "N/A"
 
                 # Store trend info for context
                 trend_info = f"""
@@ -633,6 +634,7 @@ Trend Analysis for {symbol}:
 - Daily: {confirmation.daily_trend.value if confirmation.daily_trend else 'N/A'} (ADX: {daily_adx_str})
 - Hourly: {confirmation.hourly_trend.value if confirmation.hourly_trend else 'N/A'} (RSI: {hourly_rsi_str})
 - 15m: {confirmation.m15_trend.value if confirmation.m15_trend else 'N/A'} (MACD: {confirmation.m15_macd_signal})
+- 5m: {confirmation.m5_trend.value if confirmation.m5_trend else 'N/A'} (EMA: {m5_ema_signal})
 - Entry: {confirmation.entry_quality}
 """
 
