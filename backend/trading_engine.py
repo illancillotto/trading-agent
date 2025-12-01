@@ -73,6 +73,7 @@ CONFIG = {
     "ADX_THRESHOLD": 25,  # ADX threshold for strong trends
     "RSI_OVERBOUGHT": 70,  # RSI overbought level
     "RSI_OVERSOLD": 30,  # RSI oversold level
+    "ALLOW_SCALPING": os.getenv("ALLOW_SCALPING", "false").lower() in ("true", "1", "yes"),  # Scalping mode
 
     # Risk Management
     "MAX_DAILY_LOSS_USD": 500.0,
@@ -197,9 +198,11 @@ class BotState:
                 self.trend_engine.config['rsi_overbought'] = CONFIG["RSI_OVERBOUGHT"]
                 self.trend_engine.config['rsi_oversold'] = CONFIG["RSI_OVERSOLD"]
                 self.trend_engine.config['min_confidence'] = CONFIG["MIN_TREND_CONFIDENCE"]
+                self.trend_engine.config['allow_scalping'] = CONFIG["ALLOW_SCALPING"]
                 logger.info("✅ Trend Confirmation Engine inizializzato")
                 logger.info(f"   ADX threshold: {CONFIG['ADX_THRESHOLD']}")
                 logger.info(f"   Min confidence: {CONFIG['MIN_TREND_CONFIDENCE']}")
+                logger.info(f"   Scalping mode: {'ENABLED' if CONFIG['ALLOW_SCALPING'] else 'DISABLED'}")
 
             self.initialized = True
             return True

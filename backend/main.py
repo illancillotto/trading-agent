@@ -729,7 +729,8 @@ async def get_system_config():
             },
             "trend_confirmation": {
                 "enabled": CONFIG.get("TREND_CONFIRMATION_ENABLED", False),
-                "min_confidence": CONFIG.get("MIN_TREND_CONFIDENCE", 0.6)
+                "min_confidence": CONFIG.get("MIN_TREND_CONFIDENCE", 0.6),
+                "allow_scalping": CONFIG.get("ALLOW_SCALPING", False)
             },
             "risk_management": {
                 "max_daily_loss_usd": CONFIG.get("MAX_DAILY_LOSS_USD", 500.0),

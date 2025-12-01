@@ -20,6 +20,7 @@ interface SystemConfig {
   trend_confirmation: {
     enabled: boolean
     min_confidence: number
+    allow_scalping: boolean
   }
   risk_management: {
     max_daily_loss_usd: number
@@ -171,10 +172,18 @@ export function SystemConfig() {
               </span>
             </div>
             {config.trend_confirmation.enabled && (
-              <div className="flex justify-between">
-                <span className="text-gray-500">Min Confidence:</span>
-                <span className="font-mono font-semibold">{(config.trend_confirmation.min_confidence * 100).toFixed(0)}%</span>
-              </div>
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Min Confidence:</span>
+                  <span className="font-mono font-semibold">{(config.trend_confirmation.min_confidence * 100).toFixed(0)}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Scalping Mode:</span>
+                  <span className={`font-mono font-semibold ${config.trend_confirmation.allow_scalping ? 'text-amber-600' : 'text-gray-400'}`}>
+                    {config.trend_confirmation.allow_scalping ? '⚡ ON' : 'OFF'}
+                  </span>
+                </div>
+              </>
             )}
           </div>
         </div>

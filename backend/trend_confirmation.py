@@ -95,6 +95,7 @@ class TrendConfirmationEngine:
             'rsi_overbought': 70,
             'rsi_oversold': 30,
             'min_confidence': 0.6,  # Minimum confidence to trade
+            'allow_scalping': False, # Default to False
         }
 
         logger.info(f"Initialized TrendConfirmationEngine ({'testnet' if testnet else 'mainnet'})")
@@ -135,7 +136,7 @@ class TrendConfirmationEngine:
             )
 
             # 5. Determine if we should trade
-            should_trade = self._should_trade(quality, confidence, hourly)
+            should_trade = self._should_trade(quality, confidence, hourly, m15, m5)
 
             # 6. Determine entry quality (now using 5m too)
             entry_quality = self._assess_entry_quality(m15, m5, direction)
@@ -439,7 +440,9 @@ class TrendConfirmationEngine:
         self,
         quality: TrendQuality,
         confidence: float,
-        hourly: Dict
+        hourly: Dict,
+        m15: Dict,
+        m5: Dict
     ) -> bool:
         """
         Determine if conditions are suitable for trading.
@@ -448,12 +451,37 @@ class TrendConfirmationEngine:
             quality: Overall trend quality
             confidence: Confidence score (0-1)
             hourly: Hourly timeframe analysis
+            m15: 15-minute timeframe analysis
+            m5: 5-minute timeframe analysis
 
         Returns:
             True if conditions are suitable for trading
         """
         # Don't trade if quality is poor or invalid
         if quality in [TrendQuality.POOR, TrendQuality.INVALID]:
+            # SCALPING LOGIC
+            if self.config.get('allow_scalping', False):
+                 # Check if short-term trends are strong enough to override daily trend
+                 is_bullish_scalp = (
+                     m15.get('direction') in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and
+                     m5.get('direction') in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH] and
+                     m15.get('macd_signal') == 'bullish' and
+                     m5.get('ema_signal') == 'bullish'
+                 )
+                 
+                 is_bearish_scalp = (
+                     m15.get('direction') in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and
+                     m5.get('direction') in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH] and
+                     m15.get('macd_signal') == 'bearish' and
+                     m5.get('ema_signal') == 'bearish'
+                 )
+                 
+                 if is_bullish_scalp or is_bearish_scalp:
+                     # Check for RSI extremes to avoid bad entries
+                     rsi = hourly.get('rsi', 50)
+                     if 35 < rsi < 65: # Stricter RSI for scalping
+                         return True
+            
             return False
 
         # Don't trade if confidence is too low
