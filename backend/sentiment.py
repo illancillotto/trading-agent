@@ -18,8 +18,8 @@ API_URL = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical"
 # NON SCRIVERE LA TUA KEY DIRETTAMENTE NEL CODICE
 API_KEY = os.getenv('CMC_PRO_API_KEY') 
 
-# Intervallo per il tuo trading bot (3 minuti * 60 secondi)
-INTERVALLO_SECONDI = 3 * 60 
+# Intervallo per il tuo trading bot (5 minuti * 60 secondi)
+INTERVALLO_SECONDI = 5 * 60 
 
 # --- Funzione per chiamare l'API ---
 

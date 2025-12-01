@@ -58,10 +58,10 @@ CONFIG = {
     # Trading
     "TESTNET": TESTNET_ENV in ("true", "1", "yes"),
     "TICKERS": ["BTC", "ETH", "SOL"],
-    "CYCLE_INTERVAL_MINUTES": 3,
+    "CYCLE_INTERVAL_MINUTES": 5,
 
     # Coin Screening
-    "SCREENING_ENABLED": False,  # Set to True to enable dynamic coin selection
+    "SCREENING_ENABLED": True,  # Set to True to enable dynamic coin selection
     "TOP_N_COINS": 5,
     "REBALANCE_DAY": "sunday",
     "FALLBACK_TICKERS": ["BTC", "ETH", "SOL"],  # Used if screening fails or disabled
@@ -186,7 +186,8 @@ class BotState:
 
                 # Run migration for screener tables
                 from coin_screener.db_migration import run_migration
-                run_migration(db_utils.get_connection().__enter__())
+                with db_utils.get_connection() as conn:
+                    run_migration(conn)
 
             # Trend Confirmation Engine (se abilitato - Phase 2)
             if CONFIG["TREND_CONFIRMATION_ENABLED"]:
@@ -835,7 +836,12 @@ if __name__ == "__main__":
                     testnet=CONFIG["TESTNET"],
                     tickers=CONFIG["TICKERS"],
                     cycle_interval_minutes=CONFIG["CYCLE_INTERVAL_MINUTES"],
-                    wallet_address=WALLET_ADDRESS
+                    wallet_address=WALLET_ADDRESS,
+                    screening_enabled=CONFIG.get("SCREENING_ENABLED", False),
+                    top_n_coins=CONFIG.get("TOP_N_COINS", 5),
+                    rebalance_day=CONFIG.get("REBALANCE_DAY", "sunday"),
+                    sentiment_interval_minutes=5,  # Da sentiment.py INTERVALLO_SECONDI / 60
+                    health_check_interval_minutes=5  # Da scheduler.py
                 )
                 logger.info("✅ Notifica di avvio inviata via Telegram")
             else:

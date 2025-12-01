@@ -663,6 +663,54 @@ async def get_market_data_aggregate(symbol: str = "BTC"):
 
 
 # =====================
+# System Configuration API Endpoints
+# =====================
+
+@app.get("/api/config")
+async def get_system_config():
+    """
+    Restituisce la configurazione del sistema (cicli, Coin Screener, ecc.)
+    """
+    try:
+        # Import qui per evitare import circolari
+        from trading_engine import CONFIG
+        from sentiment import INTERVALLO_SECONDI
+        
+        return {
+            "trading": {
+                "testnet": CONFIG.get("TESTNET", True),
+                "tickers": CONFIG.get("TICKERS", []),
+                "cycle_interval_minutes": CONFIG.get("CYCLE_INTERVAL_MINUTES", 5)
+            },
+            "cycles": {
+                "trading_cycle_minutes": CONFIG.get("CYCLE_INTERVAL_MINUTES", 5),
+                "sentiment_api_minutes": INTERVALLO_SECONDI // 60,
+                "health_check_minutes": 5
+            },
+            "coin_screener": {
+                "enabled": CONFIG.get("SCREENING_ENABLED", False),
+                "top_n_coins": CONFIG.get("TOP_N_COINS", 5),
+                "rebalance_day": CONFIG.get("REBALANCE_DAY", "sunday"),
+                "fallback_tickers": CONFIG.get("FALLBACK_TICKERS", [])
+            },
+            "trend_confirmation": {
+                "enabled": CONFIG.get("TREND_CONFIRMATION_ENABLED", False),
+                "min_confidence": CONFIG.get("MIN_TREND_CONFIDENCE", 0.6)
+            },
+            "risk_management": {
+                "max_daily_loss_usd": CONFIG.get("MAX_DAILY_LOSS_USD", 500.0),
+                "max_daily_loss_pct": CONFIG.get("MAX_DAILY_LOSS_PCT", 5.0),
+                "max_position_pct": CONFIG.get("MAX_POSITION_PCT", 30.0),
+                "default_stop_loss_pct": CONFIG.get("DEFAULT_STOP_LOSS_PCT", 2.0),
+                "default_take_profit_pct": CONFIG.get("DEFAULT_TAKE_PROFIT_PCT", 5.0)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Errore nel recupero configurazione: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+# =====================
 # System Logs API Endpoints
 # =====================
 
@@ -722,7 +770,12 @@ def on_startup():
                             testnet=CONFIG["TESTNET"],
                             tickers=CONFIG["TICKERS"],
                             cycle_interval_minutes=CONFIG["CYCLE_INTERVAL_MINUTES"],
-                            wallet_address=WALLET_ADDRESS
+                            wallet_address=WALLET_ADDRESS,
+                            screening_enabled=CONFIG.get("SCREENING_ENABLED", False),
+                            top_n_coins=CONFIG.get("TOP_N_COINS", 5),
+                            rebalance_day=CONFIG.get("REBALANCE_DAY", "sunday"),
+                            sentiment_interval_minutes=5,  # Da sentiment.py INTERVALLO_SECONDI / 60
+                            health_check_interval_minutes=5  # Da scheduler.py
                         )
                         logger.info("✅ Notifica di avvio inviata via Telegram")
                     else:

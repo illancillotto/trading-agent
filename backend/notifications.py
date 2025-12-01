@@ -139,7 +139,12 @@ Il bot non aprirà nuove posizioni fino a domani.
         testnet: bool = True,
         tickers: list = None,
         cycle_interval_minutes: int = 60,
-        wallet_address: str = None
+        wallet_address: str = None,
+        screening_enabled: bool = False,
+        top_n_coins: int = 5,
+        rebalance_day: str = "sunday",
+        sentiment_interval_minutes: int = 5,
+        health_check_interval_minutes: int = 5
     ) -> None:
         """Notifica avvio Trading Agent"""
         if not self.enabled:
@@ -150,12 +155,29 @@ Il bot non aprirà nuove posizioni fino a domani.
         network = "🧪 TESTNET" if testnet else "🌐 MAINNET"
         wallet_display = wallet_address[:10] + "..." + wallet_address[-6:] if wallet_address and len(wallet_address) > 16 else (wallet_address or "N/A")
         
+        # Informazioni Coin Screener
+        screener_info = ""
+        if screening_enabled:
+            screener_info = f"""
+<b>🔍 Coin Screener:</b> ✅ Abilitato
+<b>   • Top N Coins:</b> {top_n_coins}
+<b>   • Rebalance:</b> Ogni {rebalance_day.capitalize()} 00:00 UTC
+<b>   • Update Scores:</b> Giornaliero"""
+        else:
+            screener_info = """
+<b>🔍 Coin Screener:</b> ❌ Disabilitato"""
+        
         msg = f"""🚀 <b>TRADING AGENT AVVIATO</b>
 
 {network}
 <b>Wallet:</b> <code>{wallet_display}</code>
 <b>Asset monitorati:</b> {tickers_str}
-<b>Intervallo cicli:</b> {cycle_interval_minutes} minuti
+
+<b>⏱️ Cicli di Esecuzione:</b>
+<b>   • Trading Cycle:</b> Ogni {cycle_interval_minutes} minuti
+<b>   • Sentiment API:</b> Ogni {sentiment_interval_minutes} minuti
+<b>   • Health Check:</b> Ogni {health_check_interval_minutes} minuti
+{screener_info}
 
 ✅ Sistema operativo e pronto al trading
 

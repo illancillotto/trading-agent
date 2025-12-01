@@ -7,6 +7,7 @@ import { ClosedPositions } from './ClosedPositions'
 import { MarketData } from './MarketData'
 import { SystemLogs } from './SystemLogs'
 import { PerformanceOverview } from './PerformanceOverview'
+import { SystemConfig } from './SystemConfig'
 
 interface BalancePoint {
   timestamp: string
@@ -167,6 +168,9 @@ export function Dashboard() {
 
           {/* Market Data Widget */}
           <MarketData />
+
+          {/* System Configuration */}
+          <SystemConfig />
 
           {/* Closed Positions (Estimated) */}
           <article className="p-6 rounded-xl border border-gray-200 bg-white shadow-sm">
