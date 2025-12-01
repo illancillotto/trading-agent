@@ -618,7 +618,8 @@ Circuit breaker: {'ATTIVO' if risk_status['circuit_breaker_active'] else 'inatti
                 logger.info(
                     f"   Daily: {confirmation.daily_trend.value if confirmation.daily_trend else 'N/A'}, "
                     f"Hourly: {confirmation.hourly_trend.value if confirmation.hourly_trend else 'N/A'}, "
-                    f"15m: {confirmation.m15_trend.value if confirmation.m15_trend else 'N/A'}"
+                    f"15m: {confirmation.m15_trend.value if confirmation.m15_trend else 'N/A'}, "
+                    f"5m: {confirmation.m5_trend.value if confirmation.m5_trend else 'N/A'}"
                 )
                 logger.info(f"   Entry quality: {confirmation.entry_quality}")
 
