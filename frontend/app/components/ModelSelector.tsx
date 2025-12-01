@@ -13,20 +13,31 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 export function ModelSelector() {
     const [currentModel, setCurrentModel] = useState<CurrentModel | null>(null)
+    const [scalpingEnabled, setScalpingEnabled] = useState(false)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        fetchCurrentModel()
+        fetchData()
     }, [])
 
-    const fetchCurrentModel = async () => {
+    const fetchData = async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/models/current`)
-            if (!response.ok) throw new Error('Failed to fetch current model')
-            const data = await response.json()
-            setCurrentModel(data)
+            const [modelRes, configRes] = await Promise.all([
+                fetch(`${API_BASE_URL}/api/models/current`),
+                fetch(`${API_BASE_URL}/api/config`)
+            ])
+
+            if (modelRes.ok) {
+                const modelData = await modelRes.json()
+                setCurrentModel(modelData)
+            }
+
+            if (configRes.ok) {
+                const configData = await configRes.json()
+                setScalpingEnabled(configData.trend_confirmation?.allow_scalping || false)
+            }
         } catch (error) {
-            console.error('Error fetching current model:', error)
+            console.error('Error fetching data:', error)
         } finally {
             setLoading(false)
         }
@@ -62,6 +73,11 @@ export function ModelSelector() {
                     {currentModel.model_id}
                 </span>
             </div>
+            {scalpingEnabled && (
+                <div className="flex items-center px-2 py-1 bg-amber-50 border border-amber-200 rounded text-[10px] sm:text-xs text-amber-700 font-medium animate-pulse">
+                    ⚡ Scalping
+                </div>
+            )}
         </div>
     )
 }

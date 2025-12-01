@@ -139,7 +139,15 @@ class TrendConfirmationEngine:
             should_trade = self._should_trade(quality, confidence, hourly, m15, m5)
 
             # 6. Determine entry quality (now using 5m too)
-            entry_quality = self._assess_entry_quality(m15, m5, direction)
+            # If scalping (should_trade=True but quality=POOR), use short-term direction for entry assessment
+            effective_direction = direction
+            if should_trade and quality in [TrendQuality.POOR, TrendQuality.INVALID]:
+                if m5.get('direction') in [TrendDirection.BULLISH, TrendDirection.STRONG_BULLISH]:
+                    effective_direction = TrendDirection.BULLISH
+                elif m5.get('direction') in [TrendDirection.BEARISH, TrendDirection.STRONG_BEARISH]:
+                    effective_direction = TrendDirection.BEARISH
+
+            entry_quality = self._assess_entry_quality(m15, m5, effective_direction)
 
             # 7. Determine recommended direction
             recommended_direction = None
