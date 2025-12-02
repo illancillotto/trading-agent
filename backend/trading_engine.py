@@ -426,6 +426,23 @@ def trading_cycle() -> None:
 
         logger.info(f"💰 Balance: ${balance_usd:.2f}, Posizioni aperte: {len(open_positions)}")
 
+        # --- FIX: SYNC STATO REALE ---
+        # Filtra tickers_manage per includere SOLO le posizioni realmente aperte.
+        # Questo evita chiamate inutili all'AI se il trade è stato chiuso altrove o per stop-loss.
+        real_open_symbols = [p['symbol'] for p in open_positions]
+        
+        # Identifica e rimuovi i "trade fantasma" (presenti in memoria ma non sull'exchange)
+        ghost_trades = [t for t in tickers_manage if t not in real_open_symbols]
+        for ghost in ghost_trades:
+            logger.info(f"👻 Rilevato trade fantasma su {ghost}: rimuovo da gestione interna")
+            if ghost in bot_state.active_trades:
+                del bot_state.active_trades[ghost]
+            tickers_manage.remove(ghost)
+            
+        if not tickers_manage and ghost_trades:
+             logger.info("⏩ Nessuna posizione reale da gestire dopo il sync. Salto Fase Gestione.")
+        # -----------------------------
+
         # Log snapshot
         try:
             snapshot_id = db_utils.log_account_status(account_status)
