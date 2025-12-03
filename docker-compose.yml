@@ -1,28 +1,24 @@
 version: '3.8'
 
 services:
-  # Database Service
   db:
     image: postgres:15-alpine
     container_name: trading-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: trading_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Espone la porta 5432 solo se vuoi connetterti con DBeaver/PgAdmin dal tuo PC
-    # Per sicurezza in produzione puoi rimuovere questa sezione ports o limitarla a 127.0.0.1
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d trading_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # Application Service
   app:
     build: .
     container_name: trading-agent
@@ -31,13 +27,12 @@ services:
       - "5611:5611"
     volumes:
       - ./data:/app/data
-    environment:
-      - PYTHONUNBUFFERED=1
-      # Sovrascrive la connessione DB per usare il container 'db' invece di localhost
-      - DATABASE_URL=postgresql://user:password@db:5432/trading_db
-    # Carica le altre variabili (API Keys, Private Keys) dal file .env
     env_file:
       - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Costruisce l'URL per Docker usando le variabili del .env ma forzando l'host 'db'
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
       db:
         condition: service_healthy
