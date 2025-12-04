@@ -34,6 +34,152 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Interactive setup for .env file
+setup_env() {
+    if [ -f "backend/.env" ]; then
+        return 0  # File already exists
+    fi
+    
+    log_info "🔧 First time setup detected!"
+    log_info "Configuring backend/.env file..."
+    echo ""
+    
+    if [ ! -f "env_prod.example" ]; then
+        log_error "env_prod.example file not found. Cannot create .env file."
+        exit 1
+    fi
+    
+    # Create .env file from example
+    cp env_prod.example backend/.env
+    
+    log_info "Please enter the following configuration values:"
+    log_info "(Press Enter to skip optional variables or use default values)"
+    echo ""
+    
+    # Required variables
+    local vars_required=(
+        "OPENAI_API_KEY:OpenAI API Key (REQUIRED)"
+        "POSTGRES_PASSWORD:Database Password (REQUIRED)"
+        "DB_PASSWORD:Database Password (same as POSTGRES_PASSWORD)"
+    )
+    
+    # Important optional variables
+    local vars_important=(
+        "MASTER_ACCOUNT_ADDRESS:Master Account Address"
+        "PRIVATE_KEY:Private Key (Mainnet)"
+        "WALLET_ADDRESS:Wallet Address (Mainnet)"
+        "TESTNET_PRIVATE_KEY:Private Key (Testnet)"
+        "TESTNET_WALLET_ADDRESS:Wallet Address (Testnet)"
+        "COINGECKO_API_KEY:CoinGecko API Key"
+        "TELEGRAM_BOT_TOKEN:Telegram Bot Token"
+        "TELEGRAM_CHAT_ID:Telegram Chat ID"
+        "DOMAIN:Production Domain"
+        "GRAFANA_PASSWORD:Grafana Password"
+    )
+    
+    # Optional variables
+    local vars_optional=(
+        "DEEPSEEK_API_KEY:DeepSeek API Key"
+        "CMC_PRO_API_KEY:CoinMarketCap API Key"
+        "SECRET_KEY:Secret Key"
+    )
+    
+    # Process required variables
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "REQUIRED VARIABLES:"
+    log_info "═══════════════════════════════════════════════════════"
+    for var_desc in "${vars_required[@]}"; do
+        local var_name="${var_desc%%:*}"
+        local var_desc_text="${var_desc#*:}"
+        local current_value=$(grep "^${var_name}=" backend/.env | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+        
+        # Skip if already has a real value (not placeholder)
+        if [[ ! "$current_value" =~ ^(your_|your-|your ) ]]; then
+            continue
+        fi
+        
+        while true; do
+            read -p "${YELLOW}${var_desc_text}${NC}: " value
+            if [ -z "$value" ] && [[ "$var_name" == *"PASSWORD"* ]] || [[ "$var_name" == "OPENAI_API_KEY" ]]; then
+                log_error "This field is required. Please enter a value."
+                continue
+            fi
+            break
+        done
+        
+        if [ -n "$value" ]; then
+            # Escape special characters for sed
+            local escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+            sed -i "s|^${var_name}=.*|${var_name}=${escaped_value}|" backend/.env
+            
+            # Special handling for DB_PASSWORD
+            if [ "$var_name" == "POSTGRES_PASSWORD" ]; then
+                sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${escaped_value}|" backend/.env
+            fi
+        fi
+    done
+    
+    # Process important optional variables
+    echo ""
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "IMPORTANT OPTIONAL VARIABLES:"
+    log_info "═══════════════════════════════════════════════════════"
+    for var_desc in "${vars_important[@]}"; do
+        local var_name="${var_desc%%:*}"
+        local var_desc_text="${var_desc#*:}"
+        local current_value=$(grep "^${var_name}=" backend/.env | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+        
+        if [[ "$current_value" =~ ^(your_|your-|your ) ]]; then
+            read -p "${YELLOW}${var_desc_text}${NC} (optional): " value
+            if [ -n "$value" ]; then
+                local escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+                sed -i "s|^${var_name}=.*|${var_name}=${escaped_value}|" backend/.env
+            fi
+        fi
+    done
+    
+    # Process optional variables
+    echo ""
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "OTHER OPTIONAL VARIABLES:"
+    log_info "═══════════════════════════════════════════════════════"
+    log_info "You can configure these later by editing backend/.env"
+    echo ""
+    
+    # Set default values for development
+    sed -i 's/^POSTGRES_HOST=db/POSTGRES_HOST=localhost/' backend/.env
+    sed -i 's/@db:5432/@localhost:5432/' backend/.env
+    sed -i 's/^ENVIRONMENT=production/ENVIRONMENT=development/' backend/.env
+    sed -i 's/^DEBUG=false/DEBUG=true/' backend/.env
+    
+    log_success "✅ Configuration file created: backend/.env"
+    log_info "You can edit it later if needed."
+    echo ""
+}
+
+# Load environment variables from backend/.env
+load_env() {
+    log_info "Loading environment variables from backend/.env..."
+    
+    if [ ! -f "backend/.env" ]; then
+        log_error ".env file not found in backend directory."
+        exit 1
+    fi
+    
+    # Export variables from .env file (ignore comments and empty lines)
+    set -a
+    source <(grep -v '^#' backend/.env | grep -v '^$' | sed 's/^/export /')
+    set +a
+    
+    # Override for production - set POSTGRES_HOST to 'db' for Docker
+    export POSTGRES_HOST=db
+    export DATABASE_URL=postgresql://trading_user:${POSTGRES_PASSWORD:-${DB_PASSWORD}}@db:5432/trading_db
+    export ENVIRONMENT=production
+    export DEBUG=false
+    
+    log_success "Environment variables loaded"
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -47,9 +193,12 @@ check_prerequisites() {
         log_error "Docker Compose is not installed"
         exit 1
     fi
-
-    if [ ! -f "backend/.env_prod" ]; then
-        log_error ".env_prod file not found in backend directory. Copy backend/env.example to backend/.env_prod and configure it."
+    
+    # Setup .env file if it doesn't exist
+    setup_env
+    
+    if [ ! -f "backend/.env" ]; then
+        log_error ".env file not found in backend directory after setup."
         exit 1
     fi
     
@@ -189,6 +338,7 @@ main() {
     echo "==========================================="
 
     check_prerequisites
+    load_env
     generate_tag
 
     # Trap errors for rollback
@@ -199,9 +349,16 @@ main() {
     deploy
 
     log_success "🎉 Production deployment completed successfully!"
-    log_info "🌐 Application available at: https://your-domain.com"
-    log_info "📊 Grafana dashboard at: https://your-domain.com:3000"
-    log_info "📈 Prometheus metrics at: https://your-domain.com:9090"
+    if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "your-production-domain.com" ]; then
+        log_info "🌐 Application available at: https://${DOMAIN}"
+        log_info "📊 Grafana dashboard at: https://${DOMAIN}:3000"
+        log_info "📈 Prometheus metrics at: https://${DOMAIN}:9090"
+    else
+        log_info "🌐 Application available at: https://your-domain.com"
+        log_info "📊 Grafana dashboard at: https://your-domain.com:3000"
+        log_info "📈 Prometheus metrics at: https://your-domain.com:9090"
+        log_warning "Set DOMAIN variable in backend/.env to see the correct URLs"
+    fi
 }
 
 # Run main function

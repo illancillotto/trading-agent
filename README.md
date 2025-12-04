@@ -97,8 +97,8 @@ Deployment completo per produzione con alta disponibilità, sicurezza e monitora
 #### Setup Produzione
 ```bash
 # 1. Configura ambiente produzione
-cp env.prod.example .env.prod
-nano .env.prod  # Inserisci le tue credenziali
+cp backend/env.example backend/.env
+nano backend/.env  # Inserisci le tue credenziali
 
 # 2. Configura SSL (Let's Encrypt)
 mkdir -p ssl/production

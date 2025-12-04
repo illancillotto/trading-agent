@@ -23,11 +23,11 @@ Questa guida copre il deployment completo in produzione del Trading Agent con al
 git clone <repository>
 cd trading-agent
 
-# Copia configurazione produzione
-cp env.prod.example .env.prod
+# Copia configurazione (unico file per dev e prod)
+cp backend/env.example backend/.env
 
 # Modifica con i tuoi valori
-nano .env.prod
+nano backend/.env
 ```
 
 ### 2. Configura SSL
@@ -62,7 +62,7 @@ nano nginx/nginx.conf
 ```bash
 # Build e avvia
 export TAG=$(date +%Y%m%d-%H%M%S)
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.override.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 
 # Verifica
 docker compose -f docker-compose.prod.yml ps
@@ -73,7 +73,7 @@ curl -f https://yourdomain.com/api/health
 
 ### Accessi
 - **App**: https://yourdomain.com
-- **Grafana**: https://yourdomain.com:3000 (admin / password da .env.prod)
+- **Grafana**: https://yourdomain.com:3000 (admin / password da backend/.env)
 - **Prometheus**: https://yourdomain.com:9090
 
 ### Metriche Chiave
@@ -146,8 +146,14 @@ docker compose -f docker-compose.prod.yml start app
 ## 📈 Scalabilità
 
 ### Horizontal Scaling
+```bash
+# Usa la variabile d'ambiente APP_REPLICAS nel file backend/.env
+# Oppure usa direttamente il comando:
+docker compose -f docker-compose.prod.yml up -d --scale app=3
+```
+
 ```yaml
-# docker-compose.prod.override.yml
+# Oppure modifica direttamente docker-compose.prod.yml se necessario
 services:
   app:
     deploy:
@@ -249,7 +255,7 @@ docker compose -f docker-compose.prod.yml run --rm backup
 
 ## 🎯 Checklist Deploy
 
-- [ ] `.env.prod` configurato
+- [ ] `backend/.env` configurato
 - [ ] SSL certificates installati
 - [ ] Domain DNS configurato
 - [ ] Firewall configurato (solo 80,443)

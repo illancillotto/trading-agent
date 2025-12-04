@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: trading_db
       POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -53,13 +53,13 @@ services:
     restart: always
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql://trading_user:${DB_PASSWORD}@db:5432/trading_db
+      DATABASE_URL: postgresql://trading_user:${DB_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/trading_db
       MASTER_ACCOUNT_ADDRESS: ${MASTER_ACCOUNT_ADDRESS}
       PRIVATE_KEY: ${PRIVATE_KEY}
       WALLET_ADDRESS: ${WALLET_ADDRESS}
       TESTNET: ${TESTNET:-false}
       COINGECKO_API_KEY: ${COINGECKO_API_KEY}
-      LOG_LEVEL: INFO
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}  # Less verbose logging in production
     volumes:
       - app_logs:/app/logs
       - ./data:/app/data:ro
@@ -76,6 +76,17 @@ services:
       start_period: 60s
     # Production resource limits
     deploy:
+      replicas: ${APP_REPLICAS:-1}  # Can be increased for high availability
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
       resources:
         limits:
           memory: 4G
@@ -102,12 +113,15 @@ services:
     image: nginx:1.25-alpine
     container_name: trading-nginx-prod
     restart: always
+    environment:
+      - DOMAIN=${DOMAIN:-your-production-domain.com}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/ssl/certs:ro
+      - ./ssl/production:/etc/ssl/certs/production:ro  # Production SSL certificates (if exists)
       - nginx_logs:/var/log/nginx
     networks:
       - trading-network
@@ -143,15 +157,17 @@ services:
     container_name: trading-prometheus-prod
     restart: unless-stopped
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Use production config if exists, otherwise use default
+      - ${PROMETHEUS_CONFIG:-./monitoring/prometheus.yml}:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-200h}'
       - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'  # Enable admin API for maintenance
     networks:
       - trading-network
     ports:
@@ -178,7 +194,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel,grafana-worldmap-panel"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -211,10 +227,12 @@ services:
     environment:
       POSTGRES_DB: trading_db
       POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
+      BACKUP_RETENTION: ${BACKUP_RETENTION_DAYS:-30}
     volumes:
       - postgres_data:/var/lib/postgresql/data:ro
       - ./backup:/backup
+      - ./backup/production:/backup/production  # Production backup volume (if exists)
     networks:
       - trading-network
     command: >
@@ -247,6 +265,8 @@ volumes:
 networks:
   trading-network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: trading_prod_bridge
     ipam:
       config:
         - subnet: 172.20.0.0/16

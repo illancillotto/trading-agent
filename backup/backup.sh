@@ -43,8 +43,8 @@ backup_database() {
     local compose_file="docker-compose.yml"
 
     # Check if production environment
-    if [ "$ENVIRONMENT" = "production" ] || [ -f ".env.prod" ]; then
-        env_file=".env.prod"
+    if [ "$ENVIRONMENT" = "production" ] || [ -f "backend/.env" ]; then
+        env_file="backend/.env"
         compose_file="docker-compose.prod.yml"
         log_info "Using production configuration"
     fi
