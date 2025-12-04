@@ -48,11 +48,11 @@ check_prerequisites() {
         exit 1
     fi
 
-    if [ ! -f ".env.prod" ]; then
-        log_error ".env.prod file not found. Copy env.prod.example to .env.prod and configure it."
+    if [ ! -f "backend/.env_prod" ]; then
+        log_error ".env_prod file not found in backend directory. Copy backend/env.example to backend/.env_prod and configure it."
         exit 1
     fi
-
+    
     log_success "Prerequisites check passed"
 }
 
