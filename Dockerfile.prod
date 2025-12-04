@@ -18,12 +18,11 @@ COPY frontend/package.json ./frontend/
 RUN pnpm install --frozen-lockfile
 
 # Copy frontend source code
-COPY frontend/ .
+COPY frontend/ ./frontend/
 
-# Build frontend for production by changing directory and using local npm
-WORKDIR /app/frontend
-RUN npm run build
-
+# Build frontend for production from project root
+RUN cd frontend && npm run build
+ 
 # Backend production build
 FROM python:3.13-slim AS backend-build
 
