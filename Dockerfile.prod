@@ -40,7 +40,7 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 
 # Install Python dependencies for production
-RUN uv sync --frozen --no-install-project
+RUN uv sync --no-install-project
 
 # Create non-root user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
