@@ -271,6 +271,7 @@ deploy() {
     docker compose -f docker-compose.prod.yml pull
 
     # Deploy with zero downtime
+    # Note: Environment variables are already loaded by load_env() function
     docker compose -f docker-compose.prod.yml up -d
 
     # Wait for health checks
