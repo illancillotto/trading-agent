@@ -166,9 +166,18 @@ load_env() {
         exit 1
     fi
     
-    # Export variables from .env file (ignore comments and empty lines)
+    # Export variables from .env file (only process valid KEY=VALUE lines)
     set -a
-    source <(grep -v '^#' backend/.env | grep -v '^$' | sed 's/^/export /')
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+        
+        # Only process lines that look like KEY=VALUE (with optional whitespace)
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            export "$line"
+        fi
+    done < backend/.env
     set +a
     
     # Override for production - set POSTGRES_HOST to 'db' for Docker
