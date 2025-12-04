@@ -544,6 +544,99 @@ class HyperLiquidTrader:
     # ----------------------------------------------------------------------
     #                    RISK MANAGEMENT METHODS
     # ----------------------------------------------------------------------
+    def place_sl_tp_orders(
+        self,
+        symbol: str,
+        direction: str,
+        stop_loss_price: float,
+        take_profit_price: float,
+        position_size: float
+    ) -> Dict[str, Any]:
+        """
+        Piazza ordini di Stop Loss e Take Profit su Hyperliquid.
+
+        Args:
+            symbol: Simbolo della coin (es. "BTC")
+            direction: "long" o "short"
+            stop_loss_price: Prezzo di stop loss
+            take_profit_price: Prezzo di take profit
+            position_size: Dimensione della posizione (in coin, non USD)
+
+        Returns:
+            Dict con risultato dell'operazione
+        """
+        try:
+            from hyperliquid.utils.signing import OrderRequest
+
+            orders = []
+
+            # Stop Loss order (trigger order, reduce-only)
+            if stop_loss_price > 0:
+                # Per long: SL è sotto il prezzo corrente (sell quando scende)
+                # Per short: SL è sopra il prezzo corrente (buy quando sale)
+                sl_is_buy = (direction == "short")
+
+                sl_order = OrderRequest(
+                    coin=symbol,
+                    is_buy=sl_is_buy,
+                    sz=position_size,
+                    limit_px=stop_loss_price,
+                    order_type={
+                        "trigger": {
+                            "triggerPx": stop_loss_price,
+                            "isMarket": True,  # Esegui a mercato quando viene triggato
+                            "tpsl": "sl"
+                        }
+                    },
+                    reduce_only=True
+                )
+                orders.append(sl_order)
+                logger.info(f"📍 SL Order: {direction} {symbol} @ ${stop_loss_price:.2f}")
+
+            # Take Profit order (trigger order, reduce-only)
+            if take_profit_price > 0:
+                # Per long: TP è sopra il prezzo corrente (sell quando sale)
+                # Per short: TP è sotto il prezzo corrente (buy quando scende)
+                tp_is_buy = (direction == "short")
+
+                tp_order = OrderRequest(
+                    coin=symbol,
+                    is_buy=tp_is_buy,
+                    sz=position_size,
+                    limit_px=take_profit_price,
+                    order_type={
+                        "trigger": {
+                            "triggerPx": take_profit_price,
+                            "isMarket": True,  # Esegui a mercato quando viene triggato
+                            "tpsl": "tp"
+                        }
+                    },
+                    reduce_only=True
+                )
+                orders.append(tp_order)
+                logger.info(f"🎯 TP Order: {direction} {symbol} @ ${take_profit_price:.2f}")
+
+            if not orders:
+                return {"status": "skipped", "message": "No SL/TP prices provided"}
+
+            # Piazza gli ordini come gruppo positionTpsl
+            result = self.exchange.bulk_orders(orders, grouping="positionTpsl")
+
+            logger.info(f"✅ SL/TP orders piazzati per {symbol}: {result}")
+
+            return {
+                "status": "ok",
+                "message": f"SL/TP orders placed for {symbol}",
+                "result": result
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Errore piazzamento SL/TP per {symbol}: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Failed to place SL/TP: {str(e)}"
+            }
+
     def execute_signal_with_risk(
         self,
         order_json: Dict[str, Any],
@@ -721,22 +814,49 @@ class HyperLiquidTrader:
             if "fill_price" not in result:
                 result["fill_price"] = entry_price
 
+            # Calcola dimensione posizione in coin
+            position_size_coin = sizing["size_usd"] / entry_price if entry_price > 0 else 0
+
             # Registra posizione per monitoring
             risk_manager.register_position(
                 symbol=symbol,
                 direction=direction,
                 entry_price=entry_price,
-                size=sizing["size_usd"] / entry_price if entry_price > 0 else 0,
+                size=position_size_coin,
                 leverage=leverage,
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct
             )
 
+            # Calcola prezzi SL/TP assoluti
+            if entry_price > 0:
+                if direction == "long":
+                    stop_loss_price = entry_price * (1 - stop_loss_pct / 100)
+                    take_profit_price = entry_price * (1 + take_profit_pct / 100)
+                else:  # short
+                    stop_loss_price = entry_price * (1 + stop_loss_pct / 100)
+                    take_profit_price = entry_price * (1 - take_profit_pct / 100)
+
+                # Piazza ordini SL/TP su Hyperliquid
+                logger.info(f"🎯 Piazzamento ordini SL/TP per {symbol}...")
+                sl_tp_result = self.place_sl_tp_orders(
+                    symbol=symbol,
+                    direction=direction,
+                    stop_loss_price=stop_loss_price,
+                    take_profit_price=take_profit_price,
+                    position_size=position_size_coin
+                )
+
+                # Aggiungi info al result
+                result["sl_tp_orders"] = sl_tp_result
+
             result["risk_management"] = {
                 "stop_loss_pct": stop_loss_pct,
                 "take_profit_pct": take_profit_pct,
                 "position_size_usd": sizing["size_usd"],
-                "risk_usd": sizing["risk_usd"]
+                "risk_usd": sizing["risk_usd"],
+                "stop_loss_price": stop_loss_price if entry_price > 0 else 0,
+                "take_profit_price": take_profit_price if entry_price > 0 else 0
             }
 
         return result

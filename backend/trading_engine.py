@@ -826,16 +826,33 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                         bot_state.active_trades[sym_scout] = trade_id
                                         logger.info(f"✅ Trade {sym_scout} aperto e loggato (ID: {trade_id})")
 
-                                        # Notify
+                                        # Notify - Calculate actual SL/TP prices from percentages
                                         try:
+                                            risk_info = res.get("risk_management", {})
+                                            sl_pct = risk_info.get("stop_loss_pct", 2.0)
+                                            tp_pct = risk_info.get("take_profit_pct", 5.0)
+                                            direction = decision_scout.get("direction", "long")
+
+                                            # Calculate actual prices based on entry and direction
+                                            if entry_price and entry_price > 0:
+                                                if direction == "long":
+                                                    stop_loss_price = entry_price * (1 - sl_pct / 100)
+                                                    take_profit_price = entry_price * (1 + tp_pct / 100)
+                                                else:  # short
+                                                    stop_loss_price = entry_price * (1 + sl_pct / 100)
+                                                    take_profit_price = entry_price * (1 - tp_pct / 100)
+                                            else:
+                                                stop_loss_price = 0.0
+                                                take_profit_price = 0.0
+
                                             notifier.notify_trade_opened(
                                                 symbol=sym_scout,
-                                                direction=decision_scout.get("direction", "long"),
+                                                direction=direction,
                                                 size_usd=res.get("size_usd", 0.0),
                                                 leverage=decision_scout.get("leverage", 1),
                                                 entry_price=entry_price or 0,
-                                                stop_loss=decision_scout.get("stop_loss", 0.0),
-                                                take_profit=decision_scout.get("take_profit", 0.0)
+                                                stop_loss=stop_loss_price,
+                                                take_profit=take_profit_price
                                             )
                                         except Exception as e:
                                             logger.warning(f"⚠️ Notify error: {e}")
