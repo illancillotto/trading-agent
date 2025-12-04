@@ -37,14 +37,13 @@ class BacktrackAnalyzer:
     """Analyzer for trading decisions and outcomes"""
 
     def __init__(self):
-        self.db_conn = None
+        pass
 
     def connect_db(self):
         """Initialize database connection"""
         try:
             db_utils.init_db()
-            self.db_conn = db_utils.get_connection()
-            logger.info("✅ Database connected")
+            logger.info("✅ Database initialized")
             return True
         except Exception as e:
             logger.error(f"❌ Database connection failed: {e}")
@@ -124,10 +123,11 @@ class BacktrackAnalyzer:
         """
 
         try:
-            with self.db_conn.cursor() as cur:
-                cur.execute(query, (days_back,))
-                columns = [desc[0] for desc in cur.description]
-                rows = cur.fetchall()
+            with db_utils.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (days_back,))
+                    columns = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
 
             # Group by decision_id (one decision can have multiple forecasts/indicators)
             decisions_dict = {}
@@ -576,45 +576,123 @@ class BacktrackAnalyzer:
         logger.info("✅ Full backtrack analysis completed")
         return report
 
+    def link_existing_trades_to_operations(self):
+        """Link existing trades to operations based on timestamp and symbol matching"""
+        logger.info("🔗 Linking existing trades to operations...")
 
-def main():
-    """Main entry point"""
-    import argparse
+        # Get all trades without bot_operation_id
+        query_trades = """
+            SELECT id, created_at, symbol, direction, entry_price, trade_type
+            FROM executed_trades
+            WHERE bot_operation_id IS NULL
+            ORDER BY created_at ASC
+        """
 
-    parser = argparse.ArgumentParser(description='Trading Agent Backtrack Analysis')
-    parser.add_argument('--days', type=int, default=30, help='Days to analyze (default: 30)')
-    parser.add_argument('--no-save', action='store_true', help='Do not save results to file')
+        # Get all operations
+        query_operations = """
+            SELECT id, created_at, symbol, direction, operation
+            FROM bot_operations
+            WHERE operation = 'open'
+            ORDER BY created_at ASC
+        """
 
-    args = parser.parse_args()
+        try:
+            with db_utils.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get trades
+                    cur.execute(query_trades)
+                    trades = cur.fetchall()
 
-    analyzer = BacktrackAnalyzer()
-    report = analyzer.run_full_analysis(
-        days_back=args.days,
-        save_to_file=not args.no_save
-    )
+                    # Get operations
+                    cur.execute(query_operations)
+                    operations = cur.fetchall()
 
-    if report:
-        print("\n" + "="*80)
-        print("BACKTRACK ANALYSIS SUMMARY")
-        print("="*80)
-        print(f"Period: Last {args.days} days")
-        print(f"Total Decisions: {report['summary']['total_decisions']}")
-        print(f"Execution Rate: {report['summary']['execution_rate']:.1f}%")
-        print(f"Win Rate: {report['summary']['win_rate_overall']:.1f}%")
-        print(f"Avg Profit/Trade: ${report['summary']['avg_profit_per_trade']:.2f}")
-        print(f"Avg Loss/Trade: ${report['summary']['avg_loss_per_trade']:.2f}")
-        print(f"Improvement Areas: {len(report['improvement_areas']['recommendations'])} recommendations")
-        print("="*80)
+            linked_count = 0
+            for trade in trades:
+                trade_id, trade_time, trade_symbol, trade_direction, trade_price, trade_type = trade
 
-        if report['improvement_areas']['recommendations']:
-            print("\nRECOMMENDATIONS:")
-            for i, rec in enumerate(report['improvement_areas']['recommendations'], 1):
-                print(f"{i}. {rec}")
+                # Find matching operation within a reasonable time window (e.g., 5 minutes)
+                matching_op = None
+                for op in operations:
+                    op_id, op_time, op_symbol, op_direction, op_operation = op
 
-        print("\nRaw data saved to JSON files for detailed analysis.")
-    else:
-        print("❌ Analysis failed")
-        sys.exit(1)
+                    # Check if operation matches trade criteria
+                    time_diff = abs((trade_time - op_time).total_seconds())
+                    symbol_match = trade_symbol == op_symbol
+                    direction_match = trade_direction == op_direction
+                    operation_match = op_operation == 'open' and trade_type == 'open'
+
+                    if (time_diff < 300 and  # Within 5 minutes
+                        symbol_match and
+                        direction_match and
+                        operation_match):
+                        matching_op = op_id
+                        break
+
+                # Link the trade to the operation
+                if matching_op:
+                    with db_utils.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "UPDATE executed_trades SET bot_operation_id = %s WHERE id = %s",
+                                (matching_op, trade_id)
+                            )
+                            conn.commit()
+                    linked_count += 1
+                    logger.info(f"✅ Linked trade {trade_id} to operation {matching_op}")
+
+            logger.info(f"🔗 Linked {linked_count} trades to operations")
+            return linked_count
+
+        except Exception as e:
+            logger.error(f"❌ Error linking trades to operations: {e}")
+            return 0
+
+    def main():
+        """Main entry point"""
+        import argparse
+
+        parser = argparse.ArgumentParser(description='Trading Agent Backtrack Analysis')
+        parser.add_argument('--days', type=int, default=30, help='Days to analyze (default: 30)')
+        parser.add_argument('--no-save', action='store_true', help='Do not save results to file')
+        parser.add_argument('--link-trades', action='store_true', help='Link existing trades to operations before analysis')
+
+        args = parser.parse_args()
+
+        analyzer = BacktrackAnalyzer()
+
+        # Link existing trades if requested
+        if args.link_trades:
+            linked_count = analyzer.link_existing_trades_to_operations()
+            print(f"Linked {linked_count} trades to operations")
+
+        report = analyzer.run_full_analysis(
+            days_back=args.days,
+            save_to_file=not args.no_save
+        )
+
+        if report:
+            print("\n" + "="*80)
+            print("BACKTRACK ANALYSIS SUMMARY")
+            print("="*80)
+            print(f"Period: Last {args.days} days")
+            print(f"Total Decisions: {report['summary']['total_decisions']}")
+            print(f"Execution Rate: {report['summary']['execution_rate']:.1f}%")
+            print(f"Win Rate: {report['summary']['win_rate_overall']:.1f}%")
+            print(f"Avg Profit/Trade: ${report['summary']['avg_profit_per_trade']:.2f}")
+            print(f"Avg Loss/Trade: ${report['summary']['avg_loss_per_trade']:.2f}")
+            print(f"Improvement Areas: {len(report['improvement_areas']['recommendations'])} recommendations")
+            print("="*80)
+
+            if report['improvement_areas']['recommendations']:
+                print("\nRECOMMENDATIONS:")
+                for i, rec in enumerate(report['improvement_areas']['recommendations'], 1):
+                    print(f"{i}. {rec}")
+
+            print("\nRaw data saved to JSON files for detailed analysis.")
+        else:
+            print("❌ Analysis failed")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

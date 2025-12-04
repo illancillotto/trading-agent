@@ -4,6 +4,11 @@ import { defineConfig } from "vite"
 
 export default defineConfig({
   plugins: [react()],
+  publicDir: "assets",
+  build: {
+    outDir: "../static",
+    emptyOutDir: true
+  },
   server: {
     port: 5621,
     proxy: {

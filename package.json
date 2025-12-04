@@ -7,7 +7,7 @@
     "dev:frontend": "cd frontend && pnpm dev",
     "dev:backend": "cd backend && uv sync --quiet && uv run python -m uvicorn main:app --reload --port 5611 --host 0.0.0.0",
     "build": "pnpm run build:frontend && pnpm run build:backend",
-    "build:frontend": "cd frontend && pnpm build",
+    "build:frontend": "pnpm --filter trading-agent-frontend run build",
     "build:backend": "cd backend && echo \"Backend build step not yet implemented\"",
     "install:all": "pnpm install && cd backend && uv sync --quiet"
   },

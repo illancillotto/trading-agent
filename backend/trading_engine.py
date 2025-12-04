@@ -763,6 +763,21 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                 logger.warning(f"⛔ Trend check fallito per {sym_scout}")
                         
                         if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
+                            # Log Operation FIRST
+                            decision_scout['cycle_id'] = cycle_id_scout
+                            if trend_info:
+                                decision_scout['trend_info'] = trend_info
+
+                            op_id = db_utils.log_bot_operation(
+                                operation_payload=decision_scout,
+                                system_prompt=final_prompt_scout,
+                                indicators=json.loads(subset_ind),
+                                news_text=news_txt,
+                                sentiment=sentiment_json,
+                                forecasts=json.loads(subset_forc)
+                            )
+                            logger.info(f"📝 Operation logged (ID: {op_id})")
+
                             # Execute Open
                             can_trade = risk_manager.can_open_position(balance_usd)
                             if can_trade["allowed"]:
@@ -770,7 +785,7 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                 # Log execution...
                                 if 'execution_result' not in decision_scout:
                                     decision_scout['execution_result'] = res
-                                
+
                                 if res.get("status") == "ok":
                                     try:
                                         entry_price = res.get("fill_price")
@@ -778,9 +793,9 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                             # Fallback to current market price from indicators
                                             if sym_scout in indicators_map and 'current' in indicators_map[sym_scout]:
                                                 entry_price = indicators_map[sym_scout]['current'].get('price', 0)
-                                        
+
                                         trade_id = db_utils.log_executed_trade(
-                                            bot_operation_id=None, 
+                                            bot_operation_id=op_id,  # Link to the logged operation
                                             trade_type="open",
                                             symbol=sym_scout,
                                             direction=decision_scout.get("direction", "long"),
@@ -796,7 +811,7 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                         )
                                         bot_state.active_trades[sym_scout] = trade_id
                                         logger.info(f"✅ Trade {sym_scout} aperto e loggato (ID: {trade_id})")
-                                        
+
                                         # Notify
                                         try:
                                             notifier.notify_trade_opened(
@@ -821,20 +836,54 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                 
                 elif op_scout == "close":
                     logger.warning(f"⚠️ AI ha suggerito CLOSE in fase SCOUTING. Ignorato.")
-                
-                # Log Operation
-                decision_scout['cycle_id'] = cycle_id_scout
-                if trend_info:
-                    decision_scout['trend_info'] = trend_info
-                    
-                db_utils.log_bot_operation(
-                    operation_payload=decision_scout,
-                    system_prompt=final_prompt_scout,
-                    indicators=json.loads(subset_ind),
-                    news_text=news_txt,
-                    sentiment=sentiment_json,
-                    forecasts=json.loads(subset_forc)
-                )
+
+                    # Log close operation (not executed)
+                    decision_scout['cycle_id'] = cycle_id_scout
+                    if trend_info:
+                        decision_scout['trend_info'] = trend_info
+
+                    db_utils.log_bot_operation(
+                        operation_payload=decision_scout,
+                        system_prompt=final_prompt_scout,
+                        indicators=json.loads(subset_ind),
+                        news_text=news_txt,
+                        sentiment=sentiment_json,
+                        forecasts=json.loads(subset_forc)
+                    )
+
+                elif op_scout == "hold":
+                    logger.info(f"⏸️ HOLD {sym_scout} - Conf: {conf_scout:.2f}")
+
+                    # Log hold operation
+                    decision_scout['cycle_id'] = cycle_id_scout
+                    if trend_info:
+                        decision_scout['trend_info'] = trend_info
+
+                    db_utils.log_bot_operation(
+                        operation_payload=decision_scout,
+                        system_prompt=final_prompt_scout,
+                        indicators=json.loads(subset_ind),
+                        news_text=news_txt,
+                        sentiment=sentiment_json,
+                        forecasts=json.loads(subset_forc)
+                    )
+
+                else:
+                    logger.info(f"⏩ Skip {sym_scout}: Conf {conf_scout:.2f} o Trend Check {trend_check_passed}")
+
+                    # Log skip operation
+                    decision_scout['cycle_id'] = cycle_id_scout
+                    if trend_info:
+                        decision_scout['trend_info'] = trend_info
+
+                    db_utils.log_bot_operation(
+                        operation_payload=decision_scout,
+                        system_prompt=final_prompt_scout,
+                        indicators=json.loads(subset_ind),
+                        news_text=news_txt,
+                        sentiment=sentiment_json,
+                        forecasts=json.loads(subset_forc)
+                    )
 
             except Exception as e:
                 logger.error(f"❌ Errore fase scouting: {e}")

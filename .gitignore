@@ -210,3 +210,8 @@ marimo/_lsp/
 __marimo__/
 node_modules
 backend/.env_prod
+
+
+# Frontend build assets
+static/assets/
+static/index.html

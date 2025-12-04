@@ -25,8 +25,8 @@ services:
       # Enable Docker BuildKit for faster builds
       args:
         BUILDKIT_INLINE_CACHE: 1
-      cache_from:
-        - trading-agent:latest
+      #cache_from:
+        #- trading-agent:latest
     container_name: trading-agent
     restart: unless-stopped
     ports:

@@ -72,6 +72,9 @@ data/
 *.json
 !config/top_coins.json
 !config/market_data.yaml
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
 
 # Development files
 .env

@@ -9,7 +9,10 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # Copy package files first for better caching
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+COPY package.json ./
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY frontend/package.json ./frontend/
 
 # Install dependencies (cached if package.json doesn't change)
 RUN pnpm install --frozen-lockfile
@@ -17,8 +20,9 @@ RUN pnpm install --frozen-lockfile
 # Copy frontend source code
 COPY frontend/ .
 
-# Build frontend for production
-RUN pnpm run build
+# Build frontend for production by changing directory and using local npm
+WORKDIR /app/frontend
+RUN npm run build
 
 # Backend production build
 FROM python:3.13-slim AS backend-build

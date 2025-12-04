@@ -6,16 +6,16 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # Copy package files first for better caching
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+COPY package.json ./
+COPY pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml ./
+COPY frontend/package.json ./frontend/
 
 # Install dependencies (cached if package.json doesn't change)
 RUN pnpm install --frozen-lockfile
 
-# Copy frontend source code
-COPY frontend/ .
-
-# Build frontend
-RUN pnpm run build
+# Copy pre-built static files
+COPY static/ ./static/
 
 # Backend build stage
 FROM python:3.13-slim AS backend-build
@@ -36,8 +36,6 @@ COPY backend/ ./backend/
 # Create __init__.py files for all directories containing Python files
 RUN find backend/ -name "*.py" -exec dirname {} \; | xargs -I {} touch {}/__init__.py
 
-# Copy frontend build to backend static directory
-COPY --from=frontend-build /app/dist ./static
 
 # Activate virtual environment
 ENV VIRTUAL_ENV=/app/.venv
@@ -46,6 +44,10 @@ ENV PYTHONPATH=/app/backend
 
 # Expose port
 EXPOSE 5611
+
+# Set working directory back to root for final copy
+WORKDIR /app
+
 
 # Set working directory for the app
 WORKDIR /app/backend

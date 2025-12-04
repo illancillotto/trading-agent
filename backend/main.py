@@ -25,6 +25,16 @@ PUBLIC_DASHBOARD_MODE = os.getenv("PUBLIC_DASHBOARD_MODE", "false").lower() == "
 if PUBLIC_DASHBOARD_MODE:
     logger.info("🔒 PUBLIC DASHBOARD MODE ACTIVE: Logs disabled, Sensitive config hidden")
 
+# =====================
+# Trading Bot Control
+# =====================
+TRADING_BOT_ENABLED = os.getenv("TRADING_BOT_ENABLED", "false").lower() == "true"
+
+if TRADING_BOT_ENABLED:
+    logger.info("🚀 TRADING BOT IS ENABLED - Live trading attivo")
+else:
+    logger.warning("⚠️ TRADING BOT IS DISABLED - Modalità test/demo, nessun trade verrà eseguito")
+
 app = FastAPI(title="Trading Agent API")
 
 # Configure CORS middleware BEFORE routes (best practice)
@@ -723,7 +733,8 @@ async def get_system_config():
             "trading": {
                 "testnet": CONFIG.get("TESTNET", True),
                 "tickers": CONFIG.get("TICKERS", []),
-                "cycle_interval_minutes": CONFIG.get("CYCLE_INTERVAL_MINUTES", 5)
+                "cycle_interval_minutes": CONFIG.get("CYCLE_INTERVAL_MINUTES", 5),
+                "bot_enabled": TRADING_BOT_ENABLED
             },
             "cycles": {
                 "trading_cycle_minutes": CONFIG.get("CYCLE_INTERVAL_MINUTES", 5),
@@ -790,6 +801,27 @@ async def get_backtrack_analysis(days: int = Query(30, ge=1, le=365, description
         raise HTTPException(status_code=500, detail=f"Backtrack analysis failed: {str(e)}")
 
 
+@app.post("/api/backtrack-analysis/link-trades")
+async def link_existing_trades():
+    """
+    Collega retroattivamente i trade esistenti alle operazioni AI basandosi su timestamp e simboli.
+
+    Returns:
+        Dict con numero di collegamenti effettuati
+    """
+    try:
+        analyzer = BacktrackAnalyzer()
+        linked_count = analyzer.link_existing_trades_to_operations()
+
+        return {
+            "message": f"Successfully linked {linked_count} trades to operations",
+            "linked_trades": linked_count
+        }
+    except Exception as e:
+        logger.error(f"Error linking trades: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to link trades: {str(e)}")
+
+
 # =====================
 # System Logs API Endpoints
 # =====================
@@ -830,7 +862,12 @@ def on_startup():
     """Initialize services on startup"""
     print("Trading Agent API started")
     
-    # Avvia trading engine in background thread
+    # Avvia trading engine in background thread SOLO se abilitato
+    if not TRADING_BOT_ENABLED:
+        logger.warning("⚠️ Trading Bot disabilitato - Non avvio trading engine")
+        logger.info("💡 Per abilitare il trading, imposta TRADING_BOT_ENABLED=true nel file .env")
+        return
+
     try:
         # Import qui per evitare import circolari
         from trading_engine import bot_state, CONFIG, WALLET_ADDRESS, TradingScheduler, trading_cycle, health_check
