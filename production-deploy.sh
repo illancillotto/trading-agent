@@ -95,8 +95,9 @@ build_image() {
 push_image() {
     log_info "Pushing image to registry..."
 
-    docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${TAG}
-    docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest
+    log_warning "Skipping push to registry for local deployment"
+    #docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${TAG}
+    #docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest
 
     log_success "Image pushed to registry"
 }
