@@ -12,7 +12,21 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # Setup logging PRIMA di tutto
-log_filename = "/app/logs/trading_agent.log"
+# Log file path - works both locally and in Docker
+# Use /app/logs only if writable (Docker), otherwise use current directory
+log_dir = "."
+if os.path.exists("/app/logs"):
+    try:
+        # Test if we can write to /app/logs
+        test_file = "/app/logs/.write_test"
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+        log_dir = "/app/logs"
+    except (PermissionError, OSError):
+        log_dir = "."
+log_filename = os.path.join(log_dir, "trading_agent.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
