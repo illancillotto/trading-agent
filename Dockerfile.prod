@@ -79,4 +79,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:5611/api/health || exit 1
 
 # Production command with multiple workers
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5611", "--workers", "4", "--loop", "uvloop"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5611", "--workers", "4", "--loop", "asyncio"]
