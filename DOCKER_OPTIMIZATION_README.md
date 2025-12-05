@@ -142,3 +142,4 @@ Dopo l'ottimizzazione, monitora:
 - **--frozen**: previene aggiornamenti automatici imprevisti
 - **--no-install-project**: dipendenze solo, non il progetto stesso
 - **BuildKit**: parallelizzazione e caching avanzato
+

@@ -40,3 +40,4 @@ if [ "$1" = "--up" ]; then
 fi
 
 echo "🎉 Done! Use 'docker compose up -d' to start the services."
+

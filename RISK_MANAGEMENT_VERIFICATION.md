@@ -274,3 +274,4 @@ Il sistema utilizza **monitoring manuale** per SL/TP invece di ordini nativi del
 
 
 
+

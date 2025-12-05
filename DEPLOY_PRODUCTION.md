@@ -98,3 +98,4 @@ Verifica che `POSTGRES_PASSWORD` sia impostato correttamente in `backend/.env`:
 grep POSTGRES_PASSWORD backend/.env
 ```
 
+
