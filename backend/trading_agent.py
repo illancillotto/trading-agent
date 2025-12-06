@@ -294,17 +294,19 @@ IMPORTANT:
 
     # Tutti i tentativi falliti - ritorna decisione di sicurezza
     logger.error(f"❌ Tutti i {max_retries} tentativi falliti. Ultimo errore: {last_error}")
+    logger.warning("⚠️ Usando fallback HOLD neutrale (direction rimossa per neutralità)")
 
     return {
         "operation": "hold",
         "symbol": "BTC",
-        "direction": "long",
+        "direction": "long",  # Keep for schema compatibility, but operation is HOLD so it won't execute
         "target_portion_of_balance": 0.0,
         "leverage": 1,
         "stop_loss_pct": 2.0,
         "take_profit_pct": 4.0,
         "reason": f"Fallback a HOLD per errore API: {str(last_error)[:100]}",
-        "confidence": 0.0
+        "confidence": 0.0,
+        "_fallback": True  # Flag to indicate this is a fallback response
     }
 
 

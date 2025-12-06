@@ -99,7 +99,7 @@ class HyperliquidDataProvider:
     def get_available_symbols(self) -> List[str]:
         """
         Get list of available trading symbols, filtered by config/top_coins.json.
-        
+
         Returns:
             List of symbol strings (e.g., ['BTC', 'ETH', 'SOL'])
         """
@@ -107,48 +107,78 @@ class HyperliquidDataProvider:
             # Fetch metadata from Hyperliquid
             meta = self._retry_api_call(self.info.meta)
             all_universe_symbols = {asset['name'] for asset in meta['universe']}
-            
-            # Load filtered list
+
+            logger.info(f"📊 Hyperliquid {'testnet' if self.testnet else 'mainnet'} ha {len(all_universe_symbols)} coin disponibili")
+
+            # Load filtered list - try testnet-specific config first if on testnet
             top_coins = []
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            # Try finding config relative to this file: backend/coin_screener/data_providers/ -> ../../../config/top_coins.json
-            config_path = os.path.join(current_dir, "../../../config/top_coins.json")
-            
-            try:
-                if os.path.exists(config_path):
+
+            # Build config paths
+            testnet_config_path = os.path.join(current_dir, "../../../config/top_coins_testnet.json")
+            mainnet_config_path = os.path.join(current_dir, "../../../config/top_coins.json")
+
+            # Select config file based on network
+            if self.testnet and os.path.exists(testnet_config_path):
+                config_path = testnet_config_path
+                logger.info(f"📋 Usando configurazione testnet: {config_path}")
+            elif os.path.exists(mainnet_config_path):
+                config_path = mainnet_config_path
+                logger.info(f"📋 Usando configurazione {'mainnet' if not self.testnet else 'default'}: {config_path}")
+            else:
+                # Fallback to CWD-relative paths
+                alt_testnet_path = "config/top_coins_testnet.json"
+                alt_mainnet_path = "config/top_coins.json"
+
+                if self.testnet and os.path.exists(alt_testnet_path):
+                    config_path = alt_testnet_path
+                    logger.info(f"📋 Usando configurazione testnet (CWD): {config_path}")
+                elif os.path.exists(alt_mainnet_path):
+                    config_path = alt_mainnet_path
+                    logger.info(f"📋 Usando configurazione mainnet (CWD): {config_path}")
+                else:
+                    config_path = None
+                    logger.warning("⚠️ Nessun file di configurazione trovato")
+
+            # Load config file
+            if config_path:
+                try:
                     with open(config_path, 'r') as f:
                         top_coins = json.load(f)
-                        logger.info(f"Loaded {len(top_coins)} coins from {config_path}")
-                else:
-                    # Try relative to CWD just in case
-                    alt_path = "config/top_coins.json"
-                    if os.path.exists(alt_path):
-                        with open(alt_path, 'r') as f:
-                            top_coins = json.load(f)
-                            logger.info(f"Loaded {len(top_coins)} coins from {alt_path}")
-                    else:
-                        logger.warning(f"top_coins.json not found at {config_path} or {alt_path}")
-            except Exception as e:
-                logger.error(f"Error loading top_coins.json: {e}")
+                        logger.info(f"✅ Caricate {len(top_coins)} coin dal config: {top_coins[:10]}{'...' if len(top_coins) > 10 else ''}")
+                except Exception as e:
+                    logger.error(f"❌ Errore lettura config: {e}")
 
             # Fallback if list is empty or file missing
             if not top_coins:
-                logger.warning("No coins loaded from config. Using default fallback list.")
+                logger.warning("⚠️ Nessuna coin nel config. Uso fallback default.")
                 top_coins = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOGE", "DOT", "TRX"]
 
             # Filter: only return coins that are actually available on Hyperliquid
-            # This also respects the user's list order if needed, or we can sort
             filtered_symbols = [coin for coin in top_coins if coin in all_universe_symbols]
-            
+            excluded_coins = [coin for coin in top_coins if coin not in all_universe_symbols]
+
+            # Enhanced logging
+            logger.info(f"📊 Coin filtering: {len(top_coins)} in config, {len(all_universe_symbols)} on exchange, {len(filtered_symbols)} matched")
+            if excluded_coins:
+                logger.warning(f"⚠️ Coin filtrate (non disponibili su exchange): {excluded_coins}")
+
+            # Intelligent fallback for testnet: if <3 coins match, use top available coins
+            if len(filtered_symbols) < 3:
+                logger.warning(f"⚠️ Solo {len(filtered_symbols)} coin matchate. Uso top coin disponibili su exchange...")
+                # Use first 10 coins from exchange (sorted alphabetically for consistency)
+                filtered_symbols = sorted(list(all_universe_symbols))[:10]
+                logger.info(f"📋 Fallback intelligente: usando {filtered_symbols}")
+
             if not filtered_symbols:
-                 logger.error("No valid symbols found after filtering! Defaulting to BTC, ETH.")
+                 logger.error("❌ Nessuna coin valida dopo filtering! Default a BTC, ETH.")
                  return ["BTC", "ETH"]
 
-            logger.info(f"Selected {len(filtered_symbols)} symbols for processing")
+            logger.info(f"🎯 Coin selezionate per trading: {filtered_symbols}")
             return filtered_symbols
 
         except Exception as e:
-            logger.error(f"Error fetching available symbols: {e}")
+            logger.error(f"❌ Errore fetch available symbols: {e}")
             # Safe fallback
             return ["BTC", "ETH"]
 

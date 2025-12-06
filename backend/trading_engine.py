@@ -91,6 +91,7 @@ CONFIG = {
     "RSI_OVERBOUGHT": 70,  # RSI overbought level
     "RSI_OVERSOLD": 30,  # RSI oversold level
     "ALLOW_SCALPING": os.getenv("ALLOW_SCALPING", "false").lower() in ("true", "1", "yes"),  # Scalping mode
+    "ALLOW_SHORTS": os.getenv("ALLOW_SHORTS", "true").lower() in ("true", "1", "yes"),  # Allow SHORT positions (for debugging)
 
     # Risk Management
     "MAX_DAILY_LOSS_USD": 500.0,
@@ -207,6 +208,15 @@ class BotState:
                 from coin_screener.db_migration import run_migration
                 with db_utils.get_connection() as conn:
                     run_migration(conn)
+
+                # Log available coins
+                try:
+                    available_coins = self.screener.data_provider.get_available_symbols()
+                    logger.info(f"🎯 Trading coins for {'TESTNET' if CONFIG['TESTNET'] else 'MAINNET'}: {available_coins}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Impossibile recuperare coin disponibili: {e}")
+            else:
+                logger.info(f"🎯 Trading coins (screening disabled): {CONFIG['TICKERS']}")
 
             # Trend Confirmation Engine (se abilitato - Phase 2)
             if CONFIG["TREND_CONFIRMATION_ENABLED"]:
@@ -754,9 +764,10 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                 op_scout = decision_scout.get("operation", "hold")
                 sym_scout = decision_scout.get("symbol")
                 conf_scout = decision_scout.get("confidence", 0)
-                
+                direction_scout = decision_scout.get("direction", "long")
+
                 trend_info = ""  # Initialize default
-                
+
                 if op_scout == "open":
                     if sym_scout not in tickers_scout:
                         logger.warning(f"⚠️ AI ha suggerito {sym_scout} che non è nei candidati ({tickers_scout})")
@@ -764,17 +775,29 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                         # Trend Confirmation Logic (Phase 2)
                         trend_check_passed = True
                         trend_info = ""
-                        
+
                         if CONFIG["TREND_CONFIRMATION_ENABLED"] and bot_state.trend_engine:
                             # Logic for trend confirmation ... (reuse existing)
                             # Simplified call:
                             daily_metrics = None # Get from screener if possible
                             confirmation = bot_state.trend_engine.confirm_trend(sym_scout, daily_metrics)
                             trend_info = str(confirmation) # Detailed string
-                            
+
+                            # FIX: Check trend alignment with direction
+                            # LONG: should trade AND (recommended is long OR neutral)
+                            # SHORT: should trade AND (recommended is short OR neutral)
                             if not confirmation.should_trade:
                                 trend_check_passed = False
-                                logger.warning(f"⛔ Trend check fallito per {sym_scout}")
+                                logger.warning(f"⛔ Trend check fallito per {sym_scout}: should_trade=False")
+                            elif direction_scout == "long" and confirmation.recommended_direction == "short":
+                                trend_check_passed = False
+                                logger.warning(f"⛔ LONG bloccato per {sym_scout}: trend è {confirmation.recommended_direction} (bearish)")
+                            elif direction_scout == "short" and confirmation.recommended_direction == "long":
+                                trend_check_passed = False
+                                logger.warning(f"⛔ SHORT bloccato per {sym_scout}: trend è {confirmation.recommended_direction} (bullish)")
+                            else:
+                                # Trade is aligned with trend or trend is neutral
+                                logger.info(f"✅ Trend check passed per {direction_scout.upper()} su {sym_scout}: {confirmation.recommended_direction or 'neutral'}")
                         
                         if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
                             # Log Operation FIRST
@@ -793,8 +816,11 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                             logger.info(f"📝 Operation logged (ID: {op_id})")
 
                             # Execute Open
-                            can_trade = risk_manager.can_open_position(balance_usd)
-                            if can_trade["allowed"]:
+                            # Check if SHORTS are allowed (for debugging)
+                            if direction_scout == "short" and not CONFIG["ALLOW_SHORTS"]:
+                                logger.warning(f"⛔ SHORT disabilitati per configurazione (ALLOW_SHORTS=false)")
+                                decision_scout['execution_result'] = {"status": "blocked", "reason": "SHORTS disabled by config"}
+                            elif can_trade := risk_manager.can_open_position(balance_usd); can_trade["allowed"]:
                                 res = trader.execute_signal_with_risk(decision_scout, risk_manager, balance_usd)
                                 # Log execution...
                                 if 'execution_result' not in decision_scout:

@@ -143,3 +143,4 @@ Dopo l'ottimizzazione, monitora:
 - **--no-install-project**: dipendenze solo, non il progetto stesso
 - **BuildKit**: parallelizzazione e caching avanzato
 
+
