@@ -306,14 +306,21 @@ class HybridForecaster:
         
         # Calcola variazione percentuale
         pct_change = ((forecast_price - last_price) / last_price) * 100
-        
+
+        # Verifica che i valori non siano NaN o Inf
+        if pd.isna(forecast_price) or pd.isna(pct_change) or np.isinf(forecast_price) or np.isinf(pct_change):
+            warnings.warn(f"⚠️ Forecast NaN/Inf per {coin} {interval}, usando fallback")
+            forecast_price = last_price
+            pct_change = 0.0
+            model_used = "FALLBACK"
+
         return {
             "symbol": coin,
             "interval": interval,
-            "forecast_price": round(forecast_price, 2),
-            "pct_change": round(pct_change, 2),
+            "forecast_price": round(float(forecast_price), 2),
+            "pct_change": round(float(pct_change), 2),
             "model_used": model_used,
-            "last_price": round(last_price, 2),
+            "last_price": round(float(last_price), 2),
             "timestamp": current_timestamp
         }
     
