@@ -200,8 +200,8 @@ services:
     command: >
       sh -c "
         echo 'Starting database backup...' &&
-        pg_dump -h db -U trading_user trading_db > /backup/trading_db_$(date +%Y%m%d_%H%M%S).sql &&
-        echo 'Backup completed: /backup/trading_db_$(date +%Y%m%d_%H%M%S).sql' &&
+        pg_dump -h db -U trading_user trading_db > /backup/trading_db_$$(date +%Y%m%d_%H%M%S).sql &&
+        echo 'Backup completed: /backup/trading_db_$$(date +%Y%m%d_%H%M%S).sql' &&
         ls -la /backup/
       "
     depends_on:
