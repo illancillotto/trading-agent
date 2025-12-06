@@ -8,19 +8,14 @@ WORKDIR /app
 # Install pnpm globally
 RUN npm install -g pnpm
 
-# Copy package files first for better caching
-COPY package.json ./
-COPY pnpm-lock.yaml ./
-COPY pnpm-workspace.yaml ./
-COPY frontend/package.json ./frontend/
-
-# Install dependencies (cached if package.json doesn't change)
-RUN pnpm install --frozen-lockfile
-
-# Copy frontend source code
+# Copy package files and frontend source code
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/ ./frontend/
 
-# Build frontend for production from project root
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Build frontend for production
 RUN cd frontend && npm run build
  
 # Backend production build
