@@ -48,3 +48,4 @@ class BingxProvider(BaseProvider):
 
 
 
+
