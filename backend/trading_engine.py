@@ -7,7 +7,7 @@ import sys
 import os
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from dotenv import load_dotenv
 
@@ -261,6 +261,101 @@ class BotState:
 
 # Istanza globale
 bot_state = BotState()
+
+
+# ============================================================
+#                    PRE-FILTER FUNCTIONS
+# ============================================================
+
+def pre_filter_candidates(
+    tickers: List[str],
+    trend_engine: 'TrendConfirmationEngine',
+    min_confidence: float = 0.6
+) -> Tuple[List[dict], List[dict]]:
+    """
+    Pre-filtra i candidati PRIMA della chiamata LLM per risparmiare token.
+
+    Args:
+        tickers: Lista di ticker candidati
+        trend_engine: Istanza del TrendConfirmationEngine
+        min_confidence: Soglia minima di confidence (default 0.6)
+
+    Returns:
+        Tuple di (qualified_candidates, filtered_out)
+        - qualified_candidates: Lista di dict con info trend per candidati qualificati
+        - filtered_out: Lista di dict con motivo del filtro per candidati esclusi
+    """
+    qualified = []
+    filtered_out = []
+
+    logger.info(f"🔍 PRE-FILTER: Analisi trend per {len(tickers)} candidati...")
+
+    for ticker in tickers:
+        try:
+            # Esegui trend confirmation
+            confirmation = trend_engine.confirm_trend(ticker)
+
+            # Prepara info per logging
+            trend_info = {
+                "symbol": ticker,
+                "direction": confirmation.direction.value if confirmation.direction else "unknown",
+                "confidence": confirmation.confidence,
+                "quality": confirmation.quality.value if confirmation.quality else "unknown",
+                "entry_quality": confirmation.entry_quality,
+                "should_trade": confirmation.should_trade,
+                "daily_trend": confirmation.daily_trend.value if confirmation.daily_trend else None,
+                "hourly_trend": confirmation.hourly_trend.value if confirmation.hourly_trend else None,
+                "m15_trend": confirmation.m15_trend.value if confirmation.m15_trend else None
+            }
+
+            # Criteri di qualificazione
+            passes_confidence = confirmation.confidence >= min_confidence
+            passes_should_trade = confirmation.should_trade
+            passes_entry = confirmation.entry_quality != "wait" if CONFIG.get("SKIP_POOR_ENTRY", True) else True
+
+            if passes_confidence and passes_should_trade and passes_entry:
+                qualified.append(trend_info)
+                logger.info(
+                    f"  ✅ {ticker} QUALIFIED - "
+                    f"Dir: {trend_info['direction']}, "
+                    f"Conf: {confirmation.confidence:.0%}, "
+                    f"Quality: {trend_info['quality']}"
+                )
+            else:
+                # Determina motivo del filtro
+                reasons = []
+                if not passes_confidence:
+                    reasons.append(f"low_confidence ({confirmation.confidence:.0%} < {min_confidence:.0%})")
+                if not passes_should_trade:
+                    reasons.append("should_trade=False")
+                if not passes_entry:
+                    reasons.append(f"entry_quality={confirmation.entry_quality}")
+
+                trend_info["filter_reason"] = ", ".join(reasons)
+                filtered_out.append(trend_info)
+                logger.info(
+                    f"  ❌ {ticker} FILTERED - {trend_info['filter_reason']}"
+                )
+
+        except Exception as e:
+            logger.warning(f"  ⚠️ {ticker} ERROR in trend check: {e}")
+            # In caso di errore, includiamo comunque il candidato (fail-safe)
+            qualified.append({
+                "symbol": ticker,
+                "direction": "unknown",
+                "confidence": 0.5,
+                "quality": "unknown",
+                "entry_quality": "unknown",
+                "should_trade": True,
+                "error": str(e)
+            })
+
+    logger.info(
+        f"📊 PRE-FILTER RESULT: {len(qualified)}/{len(tickers)} qualified "
+        f"({len(filtered_out)} filtered out)"
+    )
+
+    return qualified, filtered_out
 
 
 # ============================================================
@@ -700,7 +795,6 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                     # Calculate duration if available
                                     duration_minutes = None
                                     if position and 'entry_time' in position:
-                                        from datetime import datetime, timezone
                                         entry_time = position['entry_time']
                                         if isinstance(entry_time, str):
                                             entry_time = datetime.fromisoformat(entry_time.replace('Z', '+00:00'))
@@ -745,260 +839,321 @@ Consecutive Losses: {risk_manager.consecutive_losses}
         # 5. FASE SCOUTING (Attiva se ci sono candidati)
         # ========================================
         if tickers_scout:
-            logger.info(f"🔭 FASE SCOUTING: Analisi {len(tickers_scout)} opportunità...")
-            
-            cycle_id_scout = f"scout_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-            
-            subset_ind, subset_forc = build_prompt_data(tickers_scout)
-            
-            msg_info_scout = f"""<context>
-ANALYSIS TYPE: MARKET SCOUTING
-FOCUS: Look for new OPEN opportunities among the candidates.
-IGNORE existing positions (handled separately).
-</context>
-
-<candidates>
-{', '.join(tickers_scout)}
-</candidates>
-
-<indicators>
-{subset_ind}
-</indicators>
-
-<news>
-{news_txt}
-</news>
-
-<sentiment>
-{sentiment_txt}
-</sentiment>
-
-<forecast>
-{subset_forc}
-</forecast>
-
-<whale_alerts>
-{whale_alerts_txt}
-</whale_alerts>
-
-<risk_status>
-Daily P&L: ${risk_manager.daily_pnl:.2f}
-</risk_status>
-"""
-            # Load and format prompt
-            with open('system_prompt.txt', 'r') as f:
-                system_prompt_template = f.read()
-                
-            final_prompt_scout = system_prompt_template.format(
-                json.dumps(account_status, indent=2), 
-                msg_info_scout
-            )
-            
-            # Call AI
             try:
-                decision_scout = previsione_trading_agent(
-                    final_prompt_scout, 
-                    cycle_id=cycle_id_scout
-                )
-                
-                op_scout = decision_scout.get("operation", "hold")
-                sym_scout = decision_scout.get("symbol")
-                conf_scout = decision_scout.get("confidence", 0)
-                direction_scout = decision_scout.get("direction", "long")
+                logger.info(f"🔭 FASE SCOUTING: Analisi {len(tickers_scout)} opportunità...")
 
-                trend_info = ""  # Initialize default
+                cycle_id_scout = f"scout_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
-                if op_scout == "open":
-                    if sym_scout not in tickers_scout:
-                        logger.warning(f"⚠️ AI ha suggerito {sym_scout} che non è nei candidati ({tickers_scout})")
-                    else:
-                        # Trend Confirmation Logic (Phase 2)
-                        trend_check_passed = True
-                        trend_info = ""
+                # ========== PRE-FILTER: Trend Check PRIMA dell'LLM ==========
+                qualified_candidates = []
+                filtered_candidates = []
 
-                        if CONFIG["TREND_CONFIRMATION_ENABLED"] and bot_state.trend_engine:
-                            # Logic for trend confirmation ... (reuse existing)
-                            # Simplified call:
-                            daily_metrics = None # Get from screener if possible
-                            confirmation = bot_state.trend_engine.confirm_trend(sym_scout, daily_metrics)
-                            trend_info = str(confirmation) # Detailed string
+                if CONFIG["TREND_CONFIRMATION_ENABLED"] and bot_state.trend_engine:
+                    min_conf = CONFIG.get("MIN_TREND_CONFIDENCE", 0.6)
+                    qualified_candidates, filtered_candidates = pre_filter_candidates(
+                        tickers_scout,
+                        bot_state.trend_engine,
+                        min_confidence=min_conf
+                    )
 
-                            # FIX: Check trend alignment with direction
-                            # LONG: should trade AND (recommended is long OR neutral)
-                            # SHORT: should trade AND (recommended is short OR neutral)
-                            if not confirmation.should_trade:
-                                trend_check_passed = False
-                                logger.warning(f"⛔ Trend check fallito per {sym_scout}: should_trade=False")
-                            elif direction_scout == "long" and confirmation.recommended_direction == "short":
-                                trend_check_passed = False
-                                logger.warning(f"⛔ LONG bloccato per {sym_scout}: trend è {confirmation.recommended_direction} (bearish)")
-                            elif direction_scout == "short" and confirmation.recommended_direction == "long":
-                                trend_check_passed = False
-                                logger.warning(f"⛔ SHORT bloccato per {sym_scout}: trend è {confirmation.recommended_direction} (bullish)")
-                            else:
-                                # Trade is aligned with trend or trend is neutral
-                                logger.info(f"✅ Trend check passed per {direction_scout.upper()} su {sym_scout}: {confirmation.recommended_direction or 'neutral'}")
-                        
-                        if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
-                            # Log Operation FIRST
-                            decision_scout['cycle_id'] = cycle_id_scout
-                            if trend_info:
-                                decision_scout['trend_info'] = trend_info
-
-                            op_id = db_utils.log_bot_operation(
-                                operation_payload=decision_scout,
-                                system_prompt=final_prompt_scout,
-                                indicators=json.loads(subset_ind),
-                                news_text=news_txt,
-                                sentiment=sentiment_json,
-                                forecasts=json.loads(subset_forc)
+                    # Log candidati filtrati nel DB (opzionale ma utile per analytics)
+                    for filtered in filtered_candidates:
+                        try:
+                            db_utils.log_bot_operation(
+                                operation="skip",
+                                symbol=filtered["symbol"],
+                                direction=filtered.get("direction", "unknown"),
+                                confidence=filtered.get("confidence", 0),
+                                raw_payload={
+                                    "reason": f"Pre-filter: {filtered.get('filter_reason', 'unknown')}",
+                                    "trend_info": filtered,
+                                    "phase": "scouting_prefilter"
+                                },
+                                cycle_id=cycle_id_scout
                             )
-                            logger.info(f"📝 Operation logged (ID: {op_id})")
+                        except Exception as log_err:
+                            logger.debug(f"Could not log filtered candidate: {log_err}")
 
-                            # Execute Open
-                            # Check if SHORTS are allowed (for debugging)
-                            if direction_scout == "short" and not CONFIG["ALLOW_SHORTS"]:
-                                logger.warning(f"⛔ SHORT disabilitati per configurazione (ALLOW_SHORTS=false)")
-                                decision_scout['execution_result'] = {"status": "blocked", "reason": "SHORTS disabled by config"}
-                            else:
-                                can_trade = risk_manager.can_open_position(balance_usd)
-                                if can_trade["allowed"]:
-                                    res = trader.execute_signal_with_risk(decision_scout, risk_manager, balance_usd)
-                                    # Log execution...
-                                    if 'execution_result' not in decision_scout:
-                                        decision_scout['execution_result'] = res
+                    # Aggiorna lista candidati
+                    if not qualified_candidates:
+                        logger.info("🚫 Nessun candidato qualificato dopo pre-filter - Skip LLM call")
+                        # Log skip totale
+                        try:
+                            db_utils.log_bot_operation(
+                                operation="hold",
+                                symbol="NONE",
+                                direction="long",
+                                confidence=0.0,
+                                raw_payload={
+                                    "reason": "All candidates filtered by trend pre-check",
+                                    "filtered_count": len(filtered_candidates),
+                                    "phase": "scouting_prefilter_complete"
+                                },
+                                cycle_id=cycle_id_scout
+                            )
+                        except:
+                            pass
+                        # Skip alla prossima iterazione - NON chiamare LLM
+                        tickers_scout = []  # Svuota per saltare il blocco LLM sotto
+                    else:
+                        # Usa solo i ticker qualificati
+                        tickers_scout = [c["symbol"] for c in qualified_candidates]
+                        logger.info(f"✅ Procedendo con {len(tickers_scout)} candidati qualificati: {tickers_scout}")
 
-                                    if res.get("status") == "ok":
-                                        try:
-                                            entry_price = res.get("fill_price")
-                                            if not entry_price:
-                                                # Fallback to current market price from indicators
-                                                if sym_scout in indicators_map and 'current' in indicators_map[sym_scout]:
-                                                    entry_price = indicators_map[sym_scout]['current'].get('price', 0)
+                # ========== CHIAMATA LLM (solo se ci sono candidati) ==========
+                if tickers_scout:
+                    subset_ind, subset_forc = build_prompt_data(tickers_scout)
+    
+                    # Aggiungi trend info al contesto per l'LLM
+                    trend_context = ""
+                    if qualified_candidates:
+                        trend_lines = []
+                        for qc in qualified_candidates:
+                            trend_lines.append(
+                                f"- {qc['symbol']}: {qc['direction']} trend, "
+                                f"confidence {qc['confidence']:.0%}, "
+                                f"quality {qc['quality']}, "
+                                f"entry {qc['entry_quality']}"
+                            )
+                        trend_context = "\n<trend_preanalysis>\n" + "\n".join(trend_lines) + "\n</trend_preanalysis>\n"
+    
+                    msg_info_scout = f"""<context>
+    ANALYSIS TYPE: MARKET SCOUTING
+    FOCUS: Look for new OPEN opportunities among the PRE-QUALIFIED candidates.
+    These candidates have already passed trend confirmation checks.
+    IGNORE existing positions (handled separately).
+    </context>
+    
+    <candidates>
+    {', '.join(tickers_scout)}
+    </candidates>
+    {trend_context}
+    <indicators>
+    {subset_ind}
+    </indicators>
+    
+    <news>
+    {news_txt}
+    </news>
+    
+    <sentiment>
+    {sentiment_txt}
+    </sentiment>
+    
+    <forecast>
+    {subset_forc}
+    </forecast>
+    
+    <whale_alerts>
+    {whale_alerts_txt}
+    </whale_alerts>
+    
+    <risk_status>
+    Daily P&L: ${risk_manager.daily_pnl:.2f}
+    </risk_status>
+    """
+                    # Load and format prompt
+                    with open('system_prompt.txt', 'r') as f:
+                        system_prompt_template = f.read()
+    
+                    final_prompt_scout = system_prompt_template.format(
+                        json.dumps(account_status, indent=2),
+                        msg_info_scout
+                    )
+    
+                    # Call AI
+                    try:
+                        decision_scout = previsione_trading_agent(
+                            final_prompt_scout,
+                            cycle_id=cycle_id_scout
+                        )
+                    except Exception as e:
+                        logger.error(f"❌ Errore chiamata AI scouting: {e}")
+                        decision_scout = {"operation": "hold", "symbol": None, "confidence": 0}
 
-                                            trade_id = db_utils.log_executed_trade(
-                                                bot_operation_id=op_id,  # Link to the logged operation
-                                                trade_type="open",
-                                                symbol=sym_scout,
-                                                direction=decision_scout.get("direction", "long"),
-                                                size=res.get("size", 0),
-                                                entry_price=entry_price or 0,
-                                                leverage=decision_scout.get("leverage", 1),
-                                                stop_loss_price=decision_scout.get("stop_loss", 0),
-                                                take_profit_price=decision_scout.get("take_profit", 0),
-                                                hl_order_id=res.get("order_id"),
-                                                hl_fill_price=res.get("fill_price"),
-                                                size_usd=res.get("size_usd"),
-                                                raw_response=res
-                                            )
-                                            bot_state.active_trades[sym_scout] = trade_id
-                                            logger.info(f"✅ Trade {sym_scout} aperto e loggato (ID: {trade_id})")
-
-                                            # Notify - Calculate actual SL/TP prices from percentages
-                                            try:
-                                                risk_info = res.get("risk_management", {})
-                                                sl_pct = risk_info.get("stop_loss_pct", 2.0)
-                                                tp_pct = risk_info.get("take_profit_pct", 5.0)
-                                                direction = decision_scout.get("direction", "long")
-
-                                                # Calculate actual prices based on entry and direction
-                                                if entry_price and entry_price > 0:
-                                                    if direction == "long":
-                                                        stop_loss_price = entry_price * (1 - sl_pct / 100)
-                                                        take_profit_price = entry_price * (1 + tp_pct / 100)
-                                                    else:  # short
-                                                        stop_loss_price = entry_price * (1 + sl_pct / 100)
-                                                        take_profit_price = entry_price * (1 - tp_pct / 100)
-                                                else:
-                                                    stop_loss_price = 0.0
-                                                    take_profit_price = 0.0
-
-                                                # Calculate size_usd if not in response
-                                                size_usd = res.get("size_usd")
-                                                if not size_usd or size_usd == 0:
-                                                    size = res.get("size", 0)
-                                                    if size and entry_price:
-                                                        size_usd = size * entry_price
-                                                    else:
-                                                        size_usd = 0.0
-
-                                                # Get public URL for details
-                                                import os
-                                                api_url = os.getenv("PUBLIC_API_URL", "https://static.9.126.98.91.clients.your-server.de")
-                                                details_url = f"{api_url}/api/trades/{trade_id}/details"
-
-                                                notifier.notify_trade_opened(
-                                                    symbol=sym_scout,
-                                                    direction=direction,
-                                                    size_usd=size_usd,
-                                                    leverage=decision_scout.get("leverage", 1),
-                                                    entry_price=entry_price or 0,
-                                                    stop_loss=stop_loss_price,
-                                                    take_profit=take_profit_price,
-                                                    trade_id=trade_id,
-                                                    details_url=details_url
-                                                )
-                                            except Exception as e:
-                                                logger.warning(f"⚠️ Notify error: {e}")
-
-                                        except Exception as log_err:
-                                            logger.error(f"❌ Errore logging apertura: {log_err}")
-                                else:
-                                    logger.warning(f"⛔ Risk Manager blocca apertura: {can_trade['reason']}")
-                                    decision_scout['execution_result'] = {"status": "blocked", "reason": can_trade['reason']}
+                    op_scout = decision_scout.get("operation", "hold")
+                    sym_scout = decision_scout.get("symbol")
+                    conf_scout = decision_scout.get("confidence", 0)
+                    direction_scout = decision_scout.get("direction", "long")
+    
+                    trend_info = ""  # Initialize default
+    
+                    if op_scout == "open":
+                        if sym_scout not in tickers_scout:
+                            logger.warning(f"⚠️ AI ha suggerito {sym_scout} che non è nei candidati ({tickers_scout})")
                         else:
-                             logger.info(f"⏩ Skip OPEN {sym_scout}: Conf {conf_scout:.2f} o Trend Check {trend_check_passed}")
-                
-                elif op_scout == "close":
-                    logger.warning(f"⚠️ AI ha suggerito CLOSE in fase SCOUTING. Ignorato.")
-
-                    # Log close operation (not executed)
-                    decision_scout['cycle_id'] = cycle_id_scout
-                    if trend_info:
-                        decision_scout['trend_info'] = trend_info
-
-                    db_utils.log_bot_operation(
-                        operation_payload=decision_scout,
-                        system_prompt=final_prompt_scout,
-                        indicators=json.loads(subset_ind),
-                        news_text=news_txt,
-                        sentiment=sentiment_json,
-                        forecasts=json.loads(subset_forc)
-                    )
-
-                elif op_scout == "hold":
-                    logger.info(f"⏸️ HOLD {sym_scout} - Conf: {conf_scout:.2f}")
-
-                    # Log hold operation
-                    decision_scout['cycle_id'] = cycle_id_scout
-                    if trend_info:
-                        decision_scout['trend_info'] = trend_info
-
-                    db_utils.log_bot_operation(
-                        operation_payload=decision_scout,
-                        system_prompt=final_prompt_scout,
-                        indicators=json.loads(subset_ind),
-                        news_text=news_txt,
-                        sentiment=sentiment_json,
-                        forecasts=json.loads(subset_forc)
-                    )
-
-                else:
-                    logger.info(f"⏩ Skip {sym_scout}: Conf {conf_scout:.2f} o Trend Check {trend_check_passed}")
-
-                    # Log skip operation
-                    decision_scout['cycle_id'] = cycle_id_scout
-                    if trend_info:
-                        decision_scout['trend_info'] = trend_info
-
-                    db_utils.log_bot_operation(
-                        operation_payload=decision_scout,
-                        system_prompt=final_prompt_scout,
-                        indicators=json.loads(subset_ind),
-                        news_text=news_txt,
-                        sentiment=sentiment_json,
-                        forecasts=json.loads(subset_forc)
-                    )
+                            # Trend check già effettuato in pre-filter
+                            # Recupera le info pre-calcolate
+                            trend_check_passed = True
+                            trend_info = ""
+                            if qualified_candidates:
+                                qc = next((c for c in qualified_candidates if c["symbol"] == sym_scout), None)
+                                if qc:
+                                    trend_info = f"Pre-qualified: {qc['direction']} trend, conf {qc['confidence']:.0%}, quality {qc['quality']}, entry {qc['entry_quality']}"
+                                    logger.info(f"✅ Using pre-filter result for {sym_scout}: {trend_info}")
+                                else:
+                                    logger.warning(f"⚠️ {sym_scout} not in pre-qualified list but passed to LLM - allowing trade")
+    
+                            if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
+                                # Log Operation FIRST
+                                decision_scout['cycle_id'] = cycle_id_scout
+                                if trend_info:
+                                    decision_scout['trend_info'] = trend_info
+    
+                                op_id = db_utils.log_bot_operation(
+                                    operation_payload=decision_scout,
+                                    system_prompt=final_prompt_scout,
+                                    indicators=json.loads(subset_ind),
+                                    news_text=news_txt,
+                                    sentiment=sentiment_json,
+                                    forecasts=json.loads(subset_forc)
+                                )
+                                logger.info(f"📝 Operation logged (ID: {op_id})")
+    
+                                # Execute Open
+                                # Check if SHORTS are allowed (for debugging)
+                                if direction_scout == "short" and not CONFIG["ALLOW_SHORTS"]:
+                                    logger.warning(f"⛔ SHORT disabilitati per configurazione (ALLOW_SHORTS=false)")
+                                    decision_scout['execution_result'] = {"status": "blocked", "reason": "SHORTS disabled by config"}
+                                else:
+                                    can_trade = risk_manager.can_open_position(balance_usd)
+                                    if can_trade["allowed"]:
+                                        res = trader.execute_signal_with_risk(decision_scout, risk_manager, balance_usd)
+                                        # Log execution...
+                                        if 'execution_result' not in decision_scout:
+                                            decision_scout['execution_result'] = res
+    
+                                        if res.get("status") == "ok":
+                                            try:
+                                                entry_price = res.get("fill_price")
+                                                if not entry_price:
+                                                    # Fallback to current market price from indicators
+                                                    if sym_scout in indicators_map and 'current' in indicators_map[sym_scout]:
+                                                        entry_price = indicators_map[sym_scout]['current'].get('price', 0)
+    
+                                                trade_id = db_utils.log_executed_trade(
+                                                    bot_operation_id=op_id,  # Link to the logged operation
+                                                    trade_type="open",
+                                                    symbol=sym_scout,
+                                                    direction=decision_scout.get("direction", "long"),
+                                                    size=res.get("size", 0),
+                                                    entry_price=entry_price or 0,
+                                                    leverage=decision_scout.get("leverage", 1),
+                                                    stop_loss_price=decision_scout.get("stop_loss", 0),
+                                                    take_profit_price=decision_scout.get("take_profit", 0),
+                                                    hl_order_id=res.get("order_id"),
+                                                    hl_fill_price=res.get("fill_price"),
+                                                    size_usd=res.get("size_usd"),
+                                                    raw_response=res
+                                                )
+                                                bot_state.active_trades[sym_scout] = trade_id
+                                                logger.info(f"✅ Trade {sym_scout} aperto e loggato (ID: {trade_id})")
+    
+                                                # Notify - Calculate actual SL/TP prices from percentages
+                                                try:
+                                                    risk_info = res.get("risk_management", {})
+                                                    sl_pct = risk_info.get("stop_loss_pct", 2.0)
+                                                    tp_pct = risk_info.get("take_profit_pct", 5.0)
+                                                    direction = decision_scout.get("direction", "long")
+    
+                                                    # Calculate actual prices based on entry and direction
+                                                    if entry_price and entry_price > 0:
+                                                        if direction == "long":
+                                                            stop_loss_price = entry_price * (1 - sl_pct / 100)
+                                                            take_profit_price = entry_price * (1 + tp_pct / 100)
+                                                        else:  # short
+                                                            stop_loss_price = entry_price * (1 + sl_pct / 100)
+                                                            take_profit_price = entry_price * (1 - tp_pct / 100)
+                                                    else:
+                                                        stop_loss_price = 0.0
+                                                        take_profit_price = 0.0
+    
+                                                    # Calculate size_usd if not in response
+                                                    size_usd = res.get("size_usd")
+                                                    if not size_usd or size_usd == 0:
+                                                        size = res.get("size", 0)
+                                                        if size and entry_price:
+                                                            size_usd = size * entry_price
+                                                        else:
+                                                            size_usd = 0.0
+    
+                                                    # Get public URL for details
+                                                    import os
+                                                    api_url = os.getenv("PUBLIC_API_URL", "https://static.9.126.98.91.clients.your-server.de")
+                                                    details_url = f"{api_url}/api/trades/{trade_id}/details"
+    
+                                                    notifier.notify_trade_opened(
+                                                        symbol=sym_scout,
+                                                        direction=direction,
+                                                        size_usd=size_usd,
+                                                        leverage=decision_scout.get("leverage", 1),
+                                                        entry_price=entry_price or 0,
+                                                        stop_loss=stop_loss_price,
+                                                        take_profit=take_profit_price,
+                                                        trade_id=trade_id,
+                                                        details_url=details_url
+                                                    )
+                                                except Exception as e:
+                                                    logger.warning(f"⚠️ Notify error: {e}")
+    
+                                            except Exception as log_err:
+                                                logger.error(f"❌ Errore logging apertura: {log_err}")
+                                    else:
+                                        logger.warning(f"⛔ Risk Manager blocca apertura: {can_trade['reason']}")
+                                        decision_scout['execution_result'] = {"status": "blocked", "reason": can_trade['reason']}
+                            else:
+                                 logger.info(f"⏩ Skip OPEN {sym_scout}: Conf {conf_scout:.2f} o Trend Check {trend_check_passed}")
+                    
+                    elif op_scout == "close":
+                        logger.warning(f"⚠️ AI ha suggerito CLOSE in fase SCOUTING. Ignorato.")
+    
+                        # Log close operation (not executed)
+                        decision_scout['cycle_id'] = cycle_id_scout
+                        if trend_info:
+                            decision_scout['trend_info'] = trend_info
+    
+                        db_utils.log_bot_operation(
+                            operation_payload=decision_scout,
+                            system_prompt=final_prompt_scout,
+                            indicators=json.loads(subset_ind),
+                            news_text=news_txt,
+                            sentiment=sentiment_json,
+                            forecasts=json.loads(subset_forc)
+                        )
+    
+                    elif op_scout == "hold":
+                        logger.info(f"⏸️ HOLD {sym_scout} - Conf: {conf_scout:.2f}")
+    
+                        # Log hold operation
+                        decision_scout['cycle_id'] = cycle_id_scout
+                        if trend_info:
+                            decision_scout['trend_info'] = trend_info
+    
+                        db_utils.log_bot_operation(
+                            operation_payload=decision_scout,
+                            system_prompt=final_prompt_scout,
+                            indicators=json.loads(subset_ind),
+                            news_text=news_txt,
+                            sentiment=sentiment_json,
+                            forecasts=json.loads(subset_forc)
+                        )
+    
+                    else:
+                        logger.info(f"⏩ Skip {sym_scout}: Conf {conf_scout:.2f} o Trend Check {trend_check_passed}")
+    
+                        # Log skip operation
+                        decision_scout['cycle_id'] = cycle_id_scout
+                        if trend_info:
+                            decision_scout['trend_info'] = trend_info
+    
+                        db_utils.log_bot_operation(
+                            operation_payload=decision_scout,
+                            system_prompt=final_prompt_scout,
+                            indicators=json.loads(subset_ind),
+                            news_text=news_txt,
+                            sentiment=sentiment_json,
+                            forecasts=json.loads(subset_forc)
+                        )
 
             except Exception as e:
                 logger.error(f"❌ Errore fase scouting: {e}")
