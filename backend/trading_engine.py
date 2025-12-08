@@ -895,14 +895,30 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
                                                     stop_loss_price = 0.0
                                                     take_profit_price = 0.0
 
+                                                # Calculate size_usd if not in response
+                                                size_usd = res.get("size_usd")
+                                                if not size_usd or size_usd == 0:
+                                                    size = res.get("size", 0)
+                                                    if size and entry_price:
+                                                        size_usd = size * entry_price
+                                                    else:
+                                                        size_usd = 0.0
+
+                                                # Get public URL for details
+                                                import os
+                                                api_url = os.getenv("PUBLIC_API_URL", "https://static.9.126.98.91.clients.your-server.de")
+                                                details_url = f"{api_url}/api/trades/{trade_id}/details"
+
                                                 notifier.notify_trade_opened(
                                                     symbol=sym_scout,
                                                     direction=direction,
-                                                    size_usd=res.get("size_usd", 0.0),
+                                                    size_usd=size_usd,
                                                     leverage=decision_scout.get("leverage", 1),
                                                     entry_price=entry_price or 0,
                                                     stop_loss=stop_loss_price,
-                                                    take_profit=take_profit_price
+                                                    take_profit=take_profit_price,
+                                                    trade_id=trade_id,
+                                                    details_url=details_url
                                                 )
                                             except Exception as e:
                                                 logger.warning(f"⚠️ Notify error: {e}")

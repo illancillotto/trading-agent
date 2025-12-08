@@ -56,21 +56,41 @@ class TelegramNotifier:
         leverage: int,
         entry_price: float,
         stop_loss: float,
-        take_profit: float
+        take_profit: float,
+        trade_id: int = None,
+        details_url: str = None
     ) -> None:
         """Notifica apertura trade"""
         emoji = "🟢" if direction == "long" else "🔴"
+
+        # Calculate potential P&L percentages
+        if entry_price and entry_price > 0:
+            sl_pct = abs((stop_loss - entry_price) / entry_price * 100) if stop_loss else 0
+            tp_pct = abs((take_profit - entry_price) / entry_price * 100) if take_profit else 0
+        else:
+            sl_pct = 0
+            tp_pct = 0
+
         msg = f"""{emoji} <b>TRADE APERTO</b>
 
 <b>Asset:</b> {symbol}
 <b>Direzione:</b> {direction.upper()}
 <b>Size:</b> ${size_usd:.2f}
 <b>Leva:</b> {leverage}x
-<b>Entry:</b> ${entry_price:.2f}
-<b>Stop Loss:</b> ${stop_loss:.2f}
-<b>Take Profit:</b> ${take_profit:.2f}
+
+<b>📊 Livelli:</b>
+<b>   • Entry:</b> ${entry_price:.4f}
+<b>   • Stop Loss:</b> ${stop_loss:.4f} (-{sl_pct:.1f}%)
+<b>   • Take Profit:</b> ${take_profit:.4f} (+{tp_pct:.1f}%)
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+        # Aggiungi link ai dettagli se disponibile
+        if details_url:
+            msg += f"""
+
+📊 <a href="{details_url}">Visualizza Dettagli Completi</a>"""
+
         self.send(msg)
 
     def notify_trade_closed(
