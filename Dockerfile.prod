@@ -43,6 +43,9 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Now copy the backend source code
 COPY backend/ ./backend/
 
+# Copy config directory
+COPY config/ ./config/
+
 # Create __init__.py files for all directories containing Python files
 RUN find backend/ -name "*.py" -exec dirname {} \; | xargs -I {} touch {}/__init__.py
 

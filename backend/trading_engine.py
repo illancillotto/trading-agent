@@ -70,10 +70,28 @@ from notifications import notifier
 TESTNET_ENV = os.getenv("TESTNET", "true").lower()
 SCREENING_ENV = os.getenv("SCREENING_ENABLED", "false").lower()
 
+# Load monitored tickers from top_coins.json
+def load_tickers_from_config():
+    """Load monitored assets from config/top_coins.json"""
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "..", "config", "top_coins.json")
+        with open(config_path, 'r') as f:
+            tickers = json.load(f)
+            # The file contains a simple list of ticker symbols
+            if isinstance(tickers, list) and tickers:
+                logger.info(f"✅ Loaded {len(tickers)} monitored assets from top_coins.json")
+                return tickers
+            else:
+                logger.warning(f"⚠️ Invalid format in top_coins.json, using defaults")
+                return ["BTC", "ETH", "SOL"]
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load tickers from top_coins.json: {e}, using defaults")
+        return ["BTC", "ETH", "SOL"]
+
 CONFIG = {
     # Trading
     "TESTNET": TESTNET_ENV in ("true", "1", "yes"),
-    "TICKERS": ["BTC", "ETH", "SOL"],
+    "TICKERS": load_tickers_from_config(),
     "CYCLE_INTERVAL_MINUTES": 5,
 
     # Coin Screening

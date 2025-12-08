@@ -377,16 +377,21 @@ class HyperLiquidTrader:
         # Assicurati che res sia sempre un dizionario
         if res is None:
             return {"status": "error", "message": "market_open returned None"}
-        
+
         # Check for explicit error status from Hyperliquid
         if isinstance(res, dict) and res.get("status") == "err":
             error_data = res.get("response", {}).get("data", "")
             return {
-                "status": "error", 
+                "status": "error",
                 "message": f"Exchange Error: {error_data}",
                 "raw": res
             }
-        
+
+        # Inject size and size_usd into response for use in notifications
+        if isinstance(res, dict):
+            res["size"] = size_float
+            res["size_usd"] = float(notional)
+
         return res
 
     # ----------------------------------------------------------------------
