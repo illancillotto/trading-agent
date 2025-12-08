@@ -668,17 +668,39 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                     pnl_pct=pnl_pct,
                                     fees_usd=res.get("fees", 0)
                                 )
+                                trade_id = bot_state.active_trades[sym_manage]
                                 del bot_state.active_trades[sym_manage]
                                 logger.info(f"✅ Trade {sym_manage} chiuso e loggato")
-                                
-                                # Notify
+
+                                # Notify with full details
                                 try:
+                                    # Get public URL for details
+                                    import os
+                                    api_url = os.getenv("PUBLIC_API_URL", "https://static.9.126.98.91.clients.your-server.de")
+                                    details_url = f"{api_url}/api/trades/{trade_id}/details"
+
+                                    # Calculate duration if available
+                                    duration_minutes = None
+                                    if position and 'entry_time' in position:
+                                        from datetime import datetime, timezone
+                                        entry_time = position['entry_time']
+                                        if isinstance(entry_time, str):
+                                            entry_time = datetime.fromisoformat(entry_time.replace('Z', '+00:00'))
+                                        duration = datetime.now(timezone.utc) - entry_time
+                                        duration_minutes = duration.total_seconds() / 60
+
                                     notifier.notify_trade_closed(
                                         symbol=sym_manage,
                                         direction=position.get("side", "unknown") if position else "unknown",
                                         pnl=pnl_usd or 0.0,
                                         pnl_pct=pnl_pct or 0.0,
-                                        reason="Signal AI"
+                                        reason="Signal AI",
+                                        entry_price=entry_price,
+                                        exit_price=exit_price,
+                                        size_usd=position.get("size_usd") if position else None,
+                                        duration_minutes=duration_minutes,
+                                        trade_id=trade_id,
+                                        details_url=details_url
                                     )
                                 except Exception as e:
                                     logger.warning(f"⚠️ Notify error: {e}")

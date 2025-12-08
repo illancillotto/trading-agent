@@ -601,6 +601,441 @@ async def get_trade_by_id(trade_id: int) -> ExecutedTrade:
         raise HTTPException(status_code=500, detail=f"Errore nel recupero del trade: {str(e)}")
 
 
+@app.get("/api/trades/{trade_id}/details")
+async def get_trade_details_html(trade_id: int):
+    """
+    Genera pagina HTML con dettagli completi del trade per Telegram Instant View
+
+    Parametri:
+    - trade_id: ID del trade da visualizzare
+
+    Ritorna:
+    - HTML page con tutti i dettagli del trade, decision AI, market data, grafici
+    """
+    from fastapi.responses import HTMLResponse
+    import json
+
+    try:
+        # Recupera trade details
+        query_trade = """
+            SELECT
+                t.id, t.created_at, t.bot_operation_id, t.trade_type, t.symbol, t.direction,
+                t.entry_price, t.exit_price, t.size, t.size_usd, t.leverage,
+                t.stop_loss_price, t.take_profit_price, t.exit_reason,
+                t.pnl_usd, t.pnl_pct, t.duration_minutes, t.status, t.closed_at, t.fees_usd
+            FROM executed_trades t
+            WHERE t.id = %s
+        """
+
+        # Recupera bot operation details se disponibili
+        query_operation = """
+            SELECT
+                bo.operation, bo.direction, bo.symbol, bo.target_portion_of_balance,
+                bo.leverage, bo.raw_payload, bo.created_at,
+                ac.system_prompt, ac.model_name, ac.raw_response
+            FROM bot_operations bo
+            LEFT JOIN ai_contexts ac ON bo.context_id = ac.id
+            WHERE bo.id = %s
+        """
+
+        # Recupera indicators context se disponibili
+        query_indicators = """
+            SELECT ic.ticker, ic.price, ic.ema20, ic.macd, ic.rsi_7,
+                   ic.volume_bid, ic.volume_ask, ic.funding_rate,
+                   ic.open_interest_latest, ic.pp, ic.s1, ic.s2, ic.r1, ic.r2
+            FROM indicators_contexts ic
+            JOIN ai_contexts ac ON ic.context_id = ac.id
+            JOIN bot_operations bo ON bo.context_id = ac.id
+            WHERE bo.id = %s
+        """
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Get trade
+                cur.execute(query_trade, (trade_id,))
+                trade_row = cur.fetchone()
+
+                if not trade_row:
+                    raise HTTPException(status_code=404, detail=f"Trade {trade_id} non trovato")
+
+                # Parse trade data
+                trade = {
+                    'id': trade_row[0],
+                    'created_at': trade_row[1],
+                    'bot_operation_id': trade_row[2],
+                    'trade_type': trade_row[3],
+                    'symbol': trade_row[4],
+                    'direction': trade_row[5],
+                    'entry_price': float(trade_row[6]) if trade_row[6] else None,
+                    'exit_price': float(trade_row[7]) if trade_row[7] else None,
+                    'size': float(trade_row[8]),
+                    'size_usd': float(trade_row[9]) if trade_row[9] else None,
+                    'leverage': trade_row[10],
+                    'stop_loss_price': float(trade_row[11]) if trade_row[11] else None,
+                    'take_profit_price': float(trade_row[12]) if trade_row[12] else None,
+                    'exit_reason': trade_row[13],
+                    'pnl_usd': float(trade_row[14]) if trade_row[14] else None,
+                    'pnl_pct': float(trade_row[15]) if trade_row[15] else None,
+                    'duration_minutes': trade_row[16],
+                    'status': trade_row[17],
+                    'closed_at': trade_row[18],
+                    'fees_usd': float(trade_row[19]) if trade_row[19] else None,
+                }
+
+                # Get bot operation if available
+                operation = None
+                if trade['bot_operation_id']:
+                    cur.execute(query_operation, (trade['bot_operation_id'],))
+                    op_row = cur.fetchone()
+                    if op_row:
+                        operation = {
+                            'operation': op_row[0],
+                            'direction': op_row[1],
+                            'symbol': op_row[2],
+                            'target_portion': float(op_row[3]) if op_row[3] else None,
+                            'leverage': op_row[4],
+                            'raw_payload': op_row[5],
+                            'created_at': op_row[6],
+                            'system_prompt': op_row[7],
+                            'model_name': op_row[8],
+                            'raw_response': op_row[9]
+                        }
+
+                    # Get indicators
+                    cur.execute(query_indicators, (trade['bot_operation_id'],))
+                    ind_row = cur.fetchone()
+                    indicators = None
+                    if ind_row:
+                        indicators = {
+                            'ticker': ind_row[0],
+                            'price': float(ind_row[1]) if ind_row[1] else None,
+                            'ema20': float(ind_row[2]) if ind_row[2] else None,
+                            'macd': float(ind_row[3]) if ind_row[3] else None,
+                            'rsi_7': float(ind_row[4]) if ind_row[4] else None,
+                            'volume_bid': float(ind_row[5]) if ind_row[5] else None,
+                            'volume_ask': float(ind_row[6]) if ind_row[6] else None,
+                            'funding_rate': float(ind_row[7]) if ind_row[7] else None,
+                            'open_interest': float(ind_row[8]) if ind_row[8] else None,
+                            'pivot_point': float(ind_row[9]) if ind_row[9] else None,
+                            's1': float(ind_row[10]) if ind_row[10] else None,
+                            's2': float(ind_row[11]) if ind_row[11] else None,
+                            'r1': float(ind_row[12]) if ind_row[12] else None,
+                            'r2': float(ind_row[13]) if ind_row[13] else None,
+                        }
+                else:
+                    indicators = None
+
+        # Generate HTML
+        pnl_color = "#10b981" if trade['pnl_usd'] and trade['pnl_usd'] > 0 else "#ef4444"
+        pnl_emoji = "🟢" if trade['pnl_usd'] and trade['pnl_usd'] > 0 else "🔴"
+
+        # TradingView chart URL
+        chart_url = f"https://www.tradingview.com/chart/?symbol=HYPERLIQUID:{trade['symbol']}USDT&interval=15"
+
+        # Format duration
+        duration_str = "N/A"
+        if trade['duration_minutes']:
+            hours = int(trade['duration_minutes'] // 60)
+            mins = int(trade['duration_minutes'] % 60)
+            duration_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+
+        # Parse AI decision if available
+        ai_decision_html = ""
+        if operation and operation['raw_payload']:
+            try:
+                payload = operation['raw_payload'] if isinstance(operation['raw_payload'], dict) else json.loads(operation['raw_payload'])
+                confidence = payload.get('confidence', 'N/A')
+                reasoning = payload.get('reasoning', 'N/A')
+
+                ai_decision_html = f"""
+                <div class="section">
+                    <h2>🤖 Decisione AI</h2>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">Modello:</span>
+                            <span class="value">{operation.get('model_name', 'N/A')}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Confidence:</span>
+                            <span class="value">{confidence}%</span>
+                        </div>
+                        <div class="data-item full-width">
+                            <span class="label">Reasoning:</span>
+                            <span class="value">{reasoning}</span>
+                        </div>
+                    </div>
+                </div>
+                """
+            except:
+                pass
+
+        # Market data HTML
+        market_data_html = ""
+        if indicators:
+            market_data_html = f"""
+            <div class="section">
+                <h2>📊 Condizioni di Mercato</h2>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="label">Prezzo:</span>
+                        <span class="value">${indicators.get('price', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">EMA 20:</span>
+                        <span class="value">${indicators.get('ema20', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">RSI 7:</span>
+                        <span class="value">{indicators.get('rsi_7', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">MACD:</span>
+                        <span class="value">{indicators.get('macd', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">Funding Rate:</span>
+                        <span class="value">{indicators.get('funding_rate', 'N/A')}%</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">Open Interest:</span>
+                        <span class="value">{indicators.get('open_interest', 'N/A')}</span>
+                    </div>
+                </div>
+
+                <h3>📍 Pivot Points</h3>
+                <div class="data-grid">
+                    <div class="data-item">
+                        <span class="label">R2:</span>
+                        <span class="value">${indicators.get('r2', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">R1:</span>
+                        <span class="value">${indicators.get('r1', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">PP:</span>
+                        <span class="value">${indicators.get('pivot_point', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">S1:</span>
+                        <span class="value">${indicators.get('s1', 'N/A')}</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="label">S2:</span>
+                        <span class="value">${indicators.get('s2', 'N/A')}</span>
+                    </div>
+                </div>
+            </div>
+            """
+
+        html = f"""
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade #{trade['id']} - {trade['symbol']} {trade['direction'].upper()}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            line-height: 1.6;
+        }}
+        .container {{
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }}
+        .header h1 {{
+            font-size: 28px;
+            margin-bottom: 10px;
+        }}
+        .pnl {{
+            font-size: 36px;
+            font-weight: bold;
+            margin: 15px 0;
+            color: {pnl_color};
+        }}
+        .section {{
+            padding: 25px;
+            border-bottom: 1px solid #e5e7eb;
+        }}
+        .section:last-child {{
+            border-bottom: none;
+        }}
+        .section h2 {{
+            font-size: 20px;
+            margin-bottom: 15px;
+            color: #1f2937;
+        }}
+        .section h3 {{
+            font-size: 16px;
+            margin: 20px 0 10px 0;
+            color: #4b5563;
+        }}
+        .data-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }}
+        .data-item {{
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }}
+        .data-item.full-width {{
+            grid-column: 1 / -1;
+        }}
+        .label {{
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }}
+        .value {{
+            font-size: 16px;
+            color: #1f2937;
+            font-weight: 500;
+        }}
+        .chart-link {{
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }}
+        .chart-link:hover {{
+            background: #2563eb;
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }}
+        .badge-long {{
+            background: #d1fae5;
+            color: #065f46;
+        }}
+        .badge-short {{
+            background: #fee2e2;
+            color: #991b1b;
+        }}
+        .footer {{
+            padding: 20px;
+            text-align: center;
+            background: #f9fafb;
+            font-size: 14px;
+            color: #6b7280;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{pnl_emoji} Trade #{trade['id']}</h1>
+            <div><span class="badge badge-{trade['direction']}">{trade['symbol']} {trade['direction'].upper()}</span></div>
+            <div class="pnl">${trade['pnl_usd']:+.2f}</div>
+            <div>{trade['pnl_pct']:+.2f}%</div>
+        </div>
+
+        <div class="section">
+            <h2>📈 Dettagli Trade</h2>
+            <div class="data-grid">
+                <div class="data-item">
+                    <span class="label">Entry Price:</span>
+                    <span class="value">${trade['entry_price']:.4f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Exit Price:</span>
+                    <span class="value">${trade['exit_price']:.4f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Size:</span>
+                    <span class="value">${trade['size_usd']:.2f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Leverage:</span>
+                    <span class="value">{trade['leverage']}x</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Stop Loss:</span>
+                    <span class="value">${trade['stop_loss_price']:.4f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Take Profit:</span>
+                    <span class="value">${trade['take_profit_price']:.4f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Durata:</span>
+                    <span class="value">{duration_str}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Exit Reason:</span>
+                    <span class="value">{trade['exit_reason'] or 'N/A'}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Fees:</span>
+                    <span class="value">${trade['fees_usd'] or 0:.4f}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Opened:</span>
+                    <span class="value">{trade['created_at'].strftime('%Y-%m-%d %H:%M:%S') if trade['created_at'] else 'N/A'}</span>
+                </div>
+                <div class="data-item">
+                    <span class="label">Closed:</span>
+                    <span class="value">{trade['closed_at'].strftime('%Y-%m-%d %H:%M:%S') if trade['closed_at'] else 'N/A'}</span>
+                </div>
+            </div>
+
+            <a href="{chart_url}" target="_blank" class="chart-link">📊 Visualizza Grafico su TradingView</a>
+        </div>
+
+        {ai_decision_html}
+
+        {market_data_html}
+
+        <div class="footer">
+            <p>🤖 Trading Agent - Powered by AI</p>
+            <p>Trade ID: {trade['id']} | Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+
+        return HTMLResponse(content=html)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating trade details HTML: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore generazione dettagli: {str(e)}")
+
+
 # =====================
 # Token Usage API Endpoints
 # =====================

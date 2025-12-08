@@ -79,18 +79,67 @@ class TelegramNotifier:
         direction: str,
         pnl: float,
         pnl_pct: float,
-        reason: str
+        reason: str,
+        entry_price: float = None,
+        exit_price: float = None,
+        size_usd: float = None,
+        duration_minutes: float = None,
+        trade_id: int = None,
+        details_url: str = None
     ) -> None:
-        """Notifica chiusura trade"""
-        emoji = "✅" if pnl >= 0 else "❌"
-        msg = f"""{emoji} <b>TRADE CHIUSO</b>
+        """Notifica chiusura trade con dettagli completi"""
+        # Emoji e status basato su P&L
+        if pnl > 0:
+            emoji = "🟢"
+            status = "PROFITTO"
+        elif pnl < 0:
+            emoji = "🔴"
+            status = "PERDITA"
+        else:
+            emoji = "⚪"
+            status = "BREAKEVEN"
+
+        # Costruisci messaggio base
+        msg = f"""{emoji} <b>TRADE CHIUSO - {status}</b>
 
 <b>Asset:</b> {symbol}
 <b>Direzione:</b> {direction.upper()}
 <b>P&L:</b> ${pnl:+.2f} ({pnl_pct:+.2f}%)
-<b>Motivo:</b> {reason}
+<b>Motivo:</b> {reason}"""
+
+        # Aggiungi dettagli prezzo se disponibili
+        if entry_price and exit_price:
+            price_change = ((exit_price - entry_price) / entry_price) * 100 if direction == "long" else ((entry_price - exit_price) / entry_price) * 100
+            msg += f"""
+
+<b>📊 Prezzi:</b>
+<b>   • Entry:</b> ${entry_price:.4f}
+<b>   • Exit:</b> ${exit_price:.4f}
+<b>   • Variazione:</b> {price_change:+.2f}%"""
+
+        # Aggiungi size se disponibile
+        if size_usd:
+            msg += f"""
+<b>   • Size:</b> ${size_usd:.2f}"""
+
+        # Aggiungi durata se disponibile
+        if duration_minutes:
+            hours = int(duration_minutes // 60)
+            mins = int(duration_minutes % 60)
+            duration_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+            msg += f"""
+<b>   • Durata:</b> {duration_str}"""
+
+        msg += f"""
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+
+        # Aggiungi link ai dettagli se disponibile
+        if details_url:
+            msg += f"""
+
+📊 <a href="{details_url}">Visualizza Dettagli Completi</a>"""
+
         self.send(msg)
 
     def notify_circuit_breaker(self, daily_loss: float, reason: str) -> None:
