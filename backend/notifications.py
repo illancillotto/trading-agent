@@ -213,17 +213,18 @@ Il bot non aprirà nuove posizioni fino a domani.
         top_n_coins: int = 5,
         rebalance_day: str = "sunday",
         sentiment_interval_minutes: int = 5,
-        health_check_interval_minutes: int = 5
+        health_check_interval_minutes: int = 5,
+        dashboard_url: str = None
     ) -> None:
         """Notifica avvio Trading Agent"""
         if not self.enabled:
             logger.warning("⚠️ Telegram notifier non abilitato, impossibile inviare notifica di avvio")
             return
-        
+
         tickers_str = ", ".join(tickers) if tickers else "N/A"
         network = "🧪 TESTNET" if testnet else "🌐 MAINNET"
         wallet_display = wallet_address[:10] + "..." + wallet_address[-6:] if wallet_address and len(wallet_address) > 16 else (wallet_address or "N/A")
-        
+
         # Informazioni Coin Screener
         screener_info = ""
         if screening_enabled:
@@ -235,7 +236,12 @@ Il bot non aprirà nuove posizioni fino a domani.
         else:
             screener_info = """
 <b>🔍 Coin Screener:</b> ❌ Disabilitato"""
-        
+
+        # Dashboard link
+        dashboard_link = ""
+        if dashboard_url:
+            dashboard_link = f'\n\n📊 <a href="{dashboard_url}">Apri Dashboard</a>'
+
         msg = f"""🚀 <b>TRADING AGENT AVVIATO</b>
 
 {network}
@@ -248,10 +254,10 @@ Il bot non aprirà nuove posizioni fino a domani.
 <b>   • Health Check:</b> Ogni {health_check_interval_minutes} minuti
 {screener_info}
 
-✅ Sistema operativo e pronto al trading
+✅ Sistema operativo e pronto al trading{dashboard_link}
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
-        
+
         result = self.send(msg)
         if result:
             logger.info("✅ Notifica di avvio inviata con successo")

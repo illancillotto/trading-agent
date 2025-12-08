@@ -1362,6 +1362,9 @@ def on_startup():
                 try:
                     if notifier.enabled:
                         logger.info("📤 Invio notifica di avvio via Telegram...")
+                        # Get dashboard URL from environment
+                        dashboard_url = os.getenv("PUBLIC_API_URL")
+
                         notifier.notify_startup(
                             testnet=CONFIG["TESTNET"],
                             tickers=CONFIG["TICKERS"],
@@ -1371,7 +1374,8 @@ def on_startup():
                             top_n_coins=CONFIG.get("TOP_N_COINS", 5),
                             rebalance_day=CONFIG.get("REBALANCE_DAY", "sunday"),
                             sentiment_interval_minutes=5,  # Da sentiment.py INTERVALLO_SECONDI / 60
-                            health_check_interval_minutes=5  # Da scheduler.py
+                            health_check_interval_minutes=5,  # Da scheduler.py
+                            dashboard_url=dashboard_url
                         )
                         logger.info("✅ Notifica di avvio inviata via Telegram")
                     else:
