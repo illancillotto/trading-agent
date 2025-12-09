@@ -62,6 +62,13 @@ from trend_confirmation import TrendConfirmationEngine
 # Market Regime Detection
 from market_regime import get_regime_detector, RegimeDetector, RegimeAnalysis, MarketRegime
 
+# Confidence Calibrator
+from confidence_calibrator import (
+    get_confidence_calibrator,
+    ConfidenceCalibrator,
+    CalibrationDecision
+)
+
 # Notifiche Telegram
 from notifications import notifier
 
@@ -120,6 +127,14 @@ CONFIG = {
     "VOLATILITY_LOW_PCT": 25,         # ATR < 25th percentile = low vol
     "REGIME_ADJUST_PARAMS": True,     # Auto-adjust leverage/SL/TP based on regime
     "REGIME_DIRECTION_PENALTY": 0.8,  # Confidence multiplier when direction mismatches
+
+    # Confidence Calibration settings
+    "CALIBRATION_ENABLED": True,
+    "CALIBRATION_LOOKBACK_DAYS": 30,
+    "CALIBRATION_MIN_WIN_RATE": 0.40,      # Block if historical WR < 40%
+    "CALIBRATION_MIN_AVG_PNL": -1.0,       # Block if historical avg P&L < -1%
+    "CALIBRATION_ADJUST_CONFIDENCE": True,  # Auto-adjust confidence based on history
+    "CALIBRATION_BLOCK_ON_FAIL": True,     # Actually block trades that fail calibration
 
     # Risk Management
     "MAX_DAILY_LOSS_USD": 500.0,
@@ -184,6 +199,7 @@ class BotState:
         self.screener: Optional[CoinScreener] = None
         self.trend_engine: Optional[TrendConfirmationEngine] = None
         self.regime_detector: Optional[RegimeDetector] = None
+        self.confidence_calibrator: Optional[ConfidenceCalibrator] = None
         self.active_trades: dict[str, int] = {}  # symbol -> trade_id mapping
         self.rotation_index: int = 0             # Indice per rotazione coin
         self.initialized: bool = False
@@ -274,6 +290,28 @@ class BotState:
                 except Exception as e:
                     logger.warning(f"⚠️ Regime Detector init failed (non-critical): {e}")
                     self.regime_detector = None
+
+            # Initialize Confidence Calibrator (se abilitato)
+            if CONFIG.get("CALIBRATION_ENABLED", True):
+                try:
+                    calibrator_config = {
+                        "lookback_days": CONFIG.get("CALIBRATION_LOOKBACK_DAYS", 30),
+                        "min_win_rate_threshold": CONFIG.get("CALIBRATION_MIN_WIN_RATE", 0.40),
+                        "min_avg_pnl_threshold": CONFIG.get("CALIBRATION_MIN_AVG_PNL", -1.0),
+                        "enable_confidence_adjustment": CONFIG.get("CALIBRATION_ADJUST_CONFIDENCE", True),
+                    }
+                    self.confidence_calibrator = get_confidence_calibrator(calibrator_config)
+
+                    # Generate initial report (async in background ideally)
+                    report = self.confidence_calibrator.generate_calibration_report()
+                    logger.info(
+                        f"✅ Confidence Calibrator inizializzato | "
+                        f"Optimal threshold: {report.optimal_threshold:.0%} | "
+                        f"Trades analyzed: {report.total_trades_analyzed}"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Confidence Calibrator init failed (non-critical): {e}")
+                    self.confidence_calibrator = None
 
             self.initialized = True
             return True
@@ -426,6 +464,52 @@ def analyze_market_regime(symbol: str, indicators: Dict) -> Optional[RegimeAnaly
     except Exception as e:
         logger.warning(f"⚠️ Regime analysis failed for {symbol}: {e}")
         return None
+
+
+def calibrate_decision(
+    decision: Dict,
+    model: Optional[str] = None
+) -> Tuple[Dict, Optional[CalibrationDecision]]:
+    """
+    Applica calibrazione storica a una decisione di trading.
+
+    Args:
+        decision: Dict con decisione LLM
+        model: Nome del modello usato
+
+    Returns:
+        Tuple di (decision_calibrata, calibration_result)
+    """
+    if not bot_state.confidence_calibrator:
+        # Nessuna calibrazione disponibile
+        return decision, None
+
+    try:
+        calibration = bot_state.confidence_calibrator.evaluate_decision(decision, model)
+
+        logger.info(f"📊 Calibration: {calibration}")
+
+        # Aggiorna decision con confidence calibrata
+        calibrated_decision = decision.copy()
+        calibrated_decision['_original_confidence'] = decision.get('confidence', 0.5)
+        calibrated_decision['confidence'] = calibration.calibrated_confidence
+        calibrated_decision['_calibration'] = {
+            'adjustment': calibration.confidence_adjustment,
+            'historical_wr': calibration.historical_win_rate,
+            'historical_pnl': calibration.historical_avg_pnl,
+            'band_quality': calibration.band_quality.value,
+            'should_execute': calibration.should_execute,
+            'reason': calibration.reason
+        }
+
+        if calibration.warnings:
+            calibrated_decision['_calibration_warnings'] = calibration.warnings
+
+        return calibrated_decision, calibration
+
+    except Exception as e:
+        logger.warning(f"⚠️ Calibration failed: {e}")
+        return decision, None
 
 
 # ============================================================
@@ -1138,7 +1222,62 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                     'adjustments_applied': True
                                 }
 
-                            if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
+                            # ========== CONFIDENCE CALIBRATION ==========
+                            calibration_result = None
+                            calibration_passed = True  # Flag to track if calibration allows trade
+
+                            if CONFIG.get("CALIBRATION_ENABLED", True) and bot_state.confidence_calibrator:
+                                logger.info(f"📊 Applying confidence calibration for {sym_scout}...")
+
+                                # Ottieni il modello usato (se disponibile)
+                                model_used = decision_scout.get('_model', None)
+
+                                decision_scout, calibration_result = calibrate_decision(decision_scout, model_used)
+
+                                if calibration_result:
+                                    # Log calibration details
+                                    logger.info(
+                                        f"📈 Calibration result: "
+                                        f"Conf {calibration_result.original_confidence:.0%} → {calibration_result.calibrated_confidence:.0%} | "
+                                        f"Historical WR: {calibration_result.historical_win_rate:.0%} | "
+                                        f"Execute: {calibration_result.should_execute}"
+                                    )
+
+                                    # Check if should block trade
+                                    if not calibration_result.should_execute and CONFIG.get("CALIBRATION_BLOCK_ON_FAIL", True):
+                                        logger.warning(
+                                            f"🚫 Trade BLOCKED by calibration: {calibration_result.reason}"
+                                        )
+
+                                        # Log blocked trade
+                                        try:
+                                            db_utils.log_bot_operation(
+                                                operation="skip",
+                                                symbol=sym_scout,
+                                                direction=direction_scout,
+                                                confidence=calibration_result.original_confidence,
+                                                raw_payload={
+                                                    "reason": f"Calibration block: {calibration_result.reason}",
+                                                    "calibration": decision_scout.get('_calibration', {}),
+                                                    "phase": "scouting_calibration_block"
+                                                },
+                                                cycle_id=cycle_id_scout
+                                            )
+                                        except Exception as log_err:
+                                            logger.debug(f"Could not log blocked trade: {log_err}")
+
+                                        # Set flag to skip execution
+                                        calibration_passed = False
+
+                                    # Log warnings
+                                    if calibration_result.warnings:
+                                        for warn in calibration_result.warnings:
+                                            logger.warning(f"⚠️ Calibration warning: {warn}")
+
+                                    # Update conf_scout with calibrated value
+                                    conf_scout = decision_scout.get('confidence', conf_scout)
+
+                            if calibration_passed and trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
                                 # Log Operation FIRST
                                 decision_scout['cycle_id'] = cycle_id_scout
                                 if trend_info:

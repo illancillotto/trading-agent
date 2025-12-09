@@ -12,6 +12,7 @@ from db_utils import get_connection
 from token_tracker import get_token_tracker
 from notifications import notifier
 from backtrack_analysis import BacktrackAnalyzer
+from confidence_calibrator import get_confidence_calibrator
 import threading
 import logging
 
@@ -1322,6 +1323,70 @@ async def get_system_logs(lines: int = Query(100, ge=1, le=1000)):
         logger.error(f"Errore nella lettura dei log: {str(e)}")
         # Return 200 with error message instead of 500
         return {"logs": [f"⚠️ Error reading logs: {str(e)}"], "message": "Error reading log file"}
+
+
+# =====================
+# Confidence Calibration API Endpoints
+# =====================
+
+@app.get("/api/calibration/report")
+async def get_calibration_report(days: int = Query(default=30, ge=7, le=90)):
+    """
+    Restituisce il report di calibrazione della confidence.
+
+    Args:
+        days: Numero di giorni da analizzare (7-90)
+    """
+    try:
+        calibrator = get_confidence_calibrator()
+        report = calibrator.generate_calibration_report(days=days)
+        return report.to_dict()
+    except Exception as e:
+        logger.error(f"Error generating calibration report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/calibration/optimal-threshold")
+async def get_optimal_threshold():
+    """Restituisce la soglia di confidence ottimale"""
+    try:
+        calibrator = get_confidence_calibrator()
+        threshold = calibrator.get_optimal_threshold()
+        return {"optimal_threshold": threshold}
+    except Exception as e:
+        logger.error(f"Error getting optimal threshold: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/calibration/evaluate")
+async def evaluate_decision(decision: Dict):
+    """
+    Valuta una decisione di trading con la calibrazione storica.
+
+    Body:
+        {
+            "confidence": 0.75,
+            "direction": "long",
+            "symbol": "BTC"
+        }
+    """
+    try:
+        calibrator = get_confidence_calibrator()
+        result = calibrator.evaluate_decision(decision)
+        return {
+            "should_execute": result.should_execute,
+            "original_confidence": result.original_confidence,
+            "calibrated_confidence": result.calibrated_confidence,
+            "adjustment": result.confidence_adjustment,
+            "historical_win_rate": result.historical_win_rate,
+            "historical_avg_pnl": result.historical_avg_pnl,
+            "band_quality": result.band_quality.value,
+            "reason": result.reason,
+            "warnings": result.warnings
+        }
+    except Exception as e:
+        logger.error(f"Error evaluating decision: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Mount static files for frontend
