@@ -59,6 +59,9 @@ from coin_screener import CoinScreener
 # Trend confirmation (Phase 2)
 from trend_confirmation import TrendConfirmationEngine
 
+# Market Regime Detection
+from market_regime import get_regime_detector, RegimeDetector, RegimeAnalysis, MarketRegime
+
 # Notifiche Telegram
 from notifications import notifier
 
@@ -110,6 +113,13 @@ CONFIG = {
     "RSI_OVERSOLD": 30,  # RSI oversold level
     "ALLOW_SCALPING": os.getenv("ALLOW_SCALPING", "false").lower() in ("true", "1", "yes"),  # Scalping mode
     "ALLOW_SHORTS": os.getenv("ALLOW_SHORTS", "true").lower() in ("true", "1", "yes"),  # Allow SHORT positions (for debugging)
+
+    # Regime Detection settings
+    "REGIME_DETECTION_ENABLED": True,
+    "VOLATILITY_HIGH_PCT": 75,        # ATR > 75th percentile = high vol
+    "VOLATILITY_LOW_PCT": 25,         # ATR < 25th percentile = low vol
+    "REGIME_ADJUST_PARAMS": True,     # Auto-adjust leverage/SL/TP based on regime
+    "REGIME_DIRECTION_PENALTY": 0.8,  # Confidence multiplier when direction mismatches
 
     # Risk Management
     "MAX_DAILY_LOSS_USD": 500.0,
@@ -173,6 +183,7 @@ class BotState:
         self.risk_manager: Optional[RiskManager] = None
         self.screener: Optional[CoinScreener] = None
         self.trend_engine: Optional[TrendConfirmationEngine] = None
+        self.regime_detector: Optional[RegimeDetector] = None
         self.active_trades: dict[str, int] = {}  # symbol -> trade_id mapping
         self.rotation_index: int = 0             # Indice per rotazione coin
         self.initialized: bool = False
@@ -249,6 +260,20 @@ class BotState:
                 logger.info(f"   ADX threshold: {CONFIG['ADX_THRESHOLD']}")
                 logger.info(f"   Min confidence: {CONFIG['MIN_TREND_CONFIDENCE']}")
                 logger.info(f"   Scalping mode: {'ENABLED' if CONFIG['ALLOW_SCALPING'] else 'DISABLED'}")
+
+            # Initialize Regime Detector (se abilitato)
+            if CONFIG["REGIME_DETECTION_ENABLED"]:
+                try:
+                    regime_config = {
+                        "adx_trending_threshold": CONFIG.get("ADX_THRESHOLD", 25),
+                        "volatility_high_percentile": CONFIG.get("VOLATILITY_HIGH_PCT", 75),
+                        "volatility_low_percentile": CONFIG.get("VOLATILITY_LOW_PCT", 25),
+                    }
+                    self.regime_detector = get_regime_detector(regime_config)
+                    logger.info("✅ Regime Detector inizializzato")
+                except Exception as e:
+                    logger.warning(f"⚠️ Regime Detector init failed (non-critical): {e}")
+                    self.regime_detector = None
 
             self.initialized = True
             return True
@@ -356,6 +381,51 @@ def pre_filter_candidates(
     )
 
     return qualified, filtered_out
+
+
+def analyze_market_regime(symbol: str, indicators: Dict) -> Optional[RegimeAnalysis]:
+    """
+    Analizza il regime di mercato per un simbolo specifico.
+
+    Args:
+        symbol: Ticker del simbolo
+        indicators: Dict con indicatori tecnici
+
+    Returns:
+        RegimeAnalysis o None se non disponibile
+    """
+    if not bot_state.regime_detector:
+        return None
+
+    try:
+        # Estrai indicatori rilevanti
+        regime_indicators = {
+            'adx': indicators.get('adx', indicators.get('ADX', 0)),
+            'atr': indicators.get('atr', indicators.get('ATR', 0)),
+            'atr_pct': indicators.get('atr_pct', 0),
+            'price': indicators.get('price', indicators.get('close', 0)),
+            'ema20': indicators.get('ema_20', indicators.get('ema20', 0)),
+            'ema50': indicators.get('ema_50', indicators.get('ema50', 0)),
+            'ema200': indicators.get('ema_200', indicators.get('ema200', 0)),
+            'rsi': indicators.get('rsi', indicators.get('RSI', 50)),
+            'volume': indicators.get('volume', 0),
+            'avg_volume': indicators.get('volume_sma', indicators.get('avg_volume', 0)),
+            'macd': indicators.get('macd', indicators.get('MACD', 0)),
+            'macd_signal': indicators.get('macd_signal', indicators.get('MACD_signal', 0)),
+        }
+
+        # Calcola ATR % se non presente
+        if regime_indicators['atr_pct'] == 0 and regime_indicators['price'] > 0:
+            regime_indicators['atr_pct'] = (regime_indicators['atr'] / regime_indicators['price']) * 100
+
+        analysis = bot_state.regime_detector.detect_regime(regime_indicators)
+        logger.info(f"🔬 {symbol} Regime: {analysis}")
+
+        return analysis
+
+    except Exception as e:
+        logger.warning(f"⚠️ Regime analysis failed for {symbol}: {e}")
+        return None
 
 
 # ============================================================
@@ -900,6 +970,40 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                         tickers_scout = [c["symbol"] for c in qualified_candidates]
                         logger.info(f"✅ Procedendo con {len(tickers_scout)} candidati qualificati: {tickers_scout}")
 
+                # ========== REGIME ANALYSIS ==========
+                regime_context = ""
+                regime_analyses = {}
+
+                if bot_state.regime_detector and indicators_json and tickers_scout:
+                    logger.info("🔬 Analyzing market regime for candidates...")
+
+                    for ticker in tickers_scout:
+                        ticker_indicators = indicators_json.get(ticker, {})
+                        if ticker_indicators:
+                            regime_analysis = analyze_market_regime(ticker, ticker_indicators)
+                            if regime_analysis:
+                                regime_analyses[ticker] = regime_analysis
+
+                    # Costruisci contesto regime per il prompt
+                    if regime_analyses:
+                        regime_lines = []
+                        for ticker, analysis in regime_analyses.items():
+                            params = analysis.recommended_params
+                            regime_lines.append(
+                                f"- {ticker}: {analysis.regime.value} (conf: {analysis.confidence:.0%})\n"
+                                f"  ADX: {analysis.adx_value:.1f}, Vol%: {analysis.volatility_percentile:.0f}, "
+                                f"Trend: {analysis.trend_strength:+.2f}\n"
+                                f"  Strategy: {params.get('strategy', 'N/A')} | "
+                                f"Preferred: {params.get('preferred_direction', 'any')} | "
+                                f"Lev mult: {params.get('leverage_multiplier', 1.0):.1f}x\n"
+                                f"  {params.get('description', '')}"
+                            )
+                            if analysis.warnings:
+                                regime_lines.append(f"  ⚠️ Warnings: {', '.join(analysis.warnings)}")
+
+                        regime_context = "\n<market_regime_analysis>\n" + "\n".join(regime_lines) + "\n</market_regime_analysis>\n"
+                        logger.info(f"📊 Regime analysis added to prompt for {len(regime_analyses)} tickers")
+
                 # ========== CHIAMATA LLM (solo se ci sono candidati) ==========
                 if tickers_scout:
                     subset_ind, subset_forc = build_prompt_data(tickers_scout)
@@ -927,7 +1031,7 @@ Consecutive Losses: {risk_manager.consecutive_losses}
     <candidates>
     {', '.join(tickers_scout)}
     </candidates>
-    {trend_context}
+    {trend_context}{regime_context}
     <indicators>
     {subset_ind}
     </indicators>
@@ -993,7 +1097,47 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                     logger.info(f"✅ Using pre-filter result for {sym_scout}: {trend_info}")
                                 else:
                                     logger.warning(f"⚠️ {sym_scout} not in pre-qualified list but passed to LLM - allowing trade")
-    
+
+                            # ========== REGIME-BASED PARAMETER ADJUSTMENT ==========
+                            if sym_scout in regime_analyses and CONFIG.get("REGIME_ADJUST_PARAMS", True):
+                                regime = regime_analyses[sym_scout]
+                                logger.info(f"🔧 Applying regime adjustments for {sym_scout} ({regime.regime.value})")
+
+                                # Adjust parameters based on regime
+                                adjusted = bot_state.regime_detector.adjust_trade_params(
+                                    decision_scout,
+                                    regime
+                                )
+
+                                # Log adjustments
+                                if adjusted != decision_scout:
+                                    logger.info(f"📊 Regime adjustments applied:")
+                                    logger.info(f"  Leverage: {decision_scout.get('leverage', 'N/A')} → {adjusted.get('leverage', 'N/A')}")
+                                    logger.info(f"  SL: {decision_scout.get('stop_loss_pct', 'N/A')} → {adjusted.get('stop_loss_pct', 'N/A')}")
+                                    logger.info(f"  TP: {decision_scout.get('take_profit_pct', 'N/A')} → {adjusted.get('take_profit_pct', 'N/A')}")
+                                    logger.info(f"  Position size mult: {adjusted.get('position_size_multiplier', 1.0)}")
+
+                                decision_scout = adjusted
+
+                                # Check direction mismatch warning
+                                preferred_dir = regime.recommended_params.get('preferred_direction', 'any')
+                                if preferred_dir != 'any' and direction_scout != preferred_dir:
+                                    logger.warning(f"⚠️ Trade direction {direction_scout} conflicts with regime preference {preferred_dir}")
+                                    # Apply confidence penalty
+                                    if CONFIG.get("REGIME_DIRECTION_PENALTY"):
+                                        original_conf = conf_scout
+                                        conf_scout *= CONFIG["REGIME_DIRECTION_PENALTY"]
+                                        decision_scout['confidence'] = conf_scout
+                                        logger.info(f"  Confidence penalized: {original_conf:.0%} → {conf_scout:.0%}")
+
+                                # Add regime info to decision
+                                decision_scout['regime_info'] = {
+                                    'regime': regime.regime.value,
+                                    'confidence': regime.confidence,
+                                    'trend_strength': regime.trend_strength,
+                                    'adjustments_applied': True
+                                }
+
                             if trend_check_passed and conf_scout >= CONFIG["MIN_CONFIDENCE"]:
                                 # Log Operation FIRST
                                 decision_scout['cycle_id'] = cycle_id_scout

@@ -75,6 +75,87 @@ HOLD if:
 - Fear & Greed 55-75: Greed = caution
 - Fear & Greed > 75: Extreme Greed = possible top (contrarian: SHORT)
 
+## MARKET REGIME ANALYSIS
+
+When <market_regime_analysis> data is provided, use it to adapt your trading strategy:
+
+### Regime Types and Trading Approach
+
+**TRENDING_UP** (Strong uptrend)
+- Strategy: Favor LONG positions, avoid shorts
+- Characteristics: ADX > 40, strong EMA alignment, positive MACD
+- Approach: Higher confidence for long entries, use momentum
+- Risk: Reduced leverage multiplier (0.8-1.0x), tighter stops
+
+**TRENDING_DOWN** (Strong downtrend)
+- Strategy: Favor SHORT positions, avoid longs
+- Characteristics: ADX > 40, bearish EMA alignment, negative MACD
+- Approach: Higher confidence for short entries
+- Risk: Reduced leverage (0.8-1.0x), tighter stops
+
+**RANGING** (Sideways/consolidation)
+- Strategy: Mean reversion, buy support/sell resistance
+- Characteristics: ADX < 25, price oscillating between EMAs
+- Approach: Lower position sizes, scalping opportunities
+- Risk: Lower leverage (0.7x), wider stops for noise
+
+**HIGH_VOLATILITY** (Choppy, unpredictable)
+- Strategy: EXTREME CAUTION - reduce exposure significantly
+- Characteristics: ATR > 75th percentile, erratic price action
+- Approach: Only high-conviction trades, prefer holding
+- Risk: Minimum leverage (0.5x), very wide stops (1.8x), small positions (0.5x)
+
+**LOW_VOLATILITY** (Quiet, compressed)
+- Strategy: Anticipate breakout, cautious positioning
+- Characteristics: ATR < 25th percentile, tight price range
+- Approach: Wait for confirmation before entering
+- Risk: Moderate adjustments, tight stops (0.7x)
+
+**BREAKOUT** (High volume expansion)
+- Strategy: Follow breakout direction with conviction
+- Characteristics: High volume, strong directional move, expanding ATR
+- Approach: Quick entries on confirmation, ride momentum
+- Risk: Higher leverage allowed (1.2x), wider targets (2.0x TP)
+
+**UNKNOWN** (Insufficient data)
+- Strategy: Default conservative approach
+- Approach: Rely on traditional indicator analysis
+- Risk: Standard risk parameters
+
+### Using Regime Information
+
+1. **Preferred Direction**: If regime shows preferred_direction (e.g., "long" for TRENDING_UP):
+   - Significantly favor trades in that direction (increase confidence by 10-20%)
+   - Be skeptical of counter-trend trades (decrease confidence by 20-30%)
+   - For counter-trend trades, require exceptional confirmation from multiple indicators
+
+2. **Confidence Adjustment**:
+   - High regime confidence (>80%): Trust regime recommendation strongly
+   - Medium confidence (50-80%): Consider regime as one factor among many
+   - Low confidence (<50%): Focus more on traditional indicators
+
+3. **Trend Strength** (-1.0 to +1.0):
+   - Strong positive (>0.5): Bullish bias, favor longs
+   - Strong negative (<-0.5): Bearish bias, favor shorts
+   - Neutral (-0.3 to +0.3): No directional bias
+
+4. **Volatility Adaptation**:
+   - High volatility regimes: Reduce leverage, widen stops, smaller positions
+   - Low volatility regimes: Can use tighter stops but watch for breakouts
+   - Breakout regimes: Accept wider stops to avoid premature stop-outs
+
+5. **Strategy Selection**:
+   - "momentum": Follow the trend, don't fight it
+   - "mean_reversion": Trade bounces off support/resistance
+   - "breakout": Wait for confirmation then enter aggressively
+   - "defensive": Preserve capital, only highest conviction trades
+
+### Regime Warnings
+If warnings are present (e.g., "Weak trend", "Extreme volatility"), exercise extra caution:
+- Reduce position size
+- Increase required indicator agreement (3+ instead of 2+)
+- Consider HOLD if conviction isn't extremely high
+
 ## OUTPUT
 
 Respond EXCLUSIVELY with a valid JSON in this format:
