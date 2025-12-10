@@ -21,34 +21,36 @@ scrape_configs:
     params:
       format: ['prometheus']
 
-  # PostgreSQL Database
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['db:5432']
-        labels:
-          service: 'postgres'
-          environment: 'production'
-    scrape_interval: 30s
-    # Note: Requires postgres_exporter sidecar or custom metrics endpoint
+  # PostgreSQL Database (DISABLED - requires postgres_exporter)
+  # To enable: add postgres_exporter sidecar container
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+  #       labels:
+  #         service: 'postgres'
+  #         environment: 'production'
+  #   scrape_interval: 30s
 
-  # Nginx Reverse Proxy
-  - job_name: 'nginx'
-    static_configs:
-      - targets: ['nginx:80']
-    scrape_interval: 15s
-    # Note: Requires nginx-prometheus-exporter or stub_status module
+  # Nginx Reverse Proxy (DISABLED - requires nginx-prometheus-exporter)
+  # To enable: add nginx-prometheus-exporter or enable stub_status module
+  # - job_name: 'nginx'
+  #   static_configs:
+  #     - targets: ['nginx-exporter:9113']
+  #   scrape_interval: 15s
 
-  # System Metrics (if using node-exporter)
-  - job_name: 'node'
-    static_configs:
-      - targets: ['node-exporter:9100']
-    scrape_interval: 30s
+  # System Metrics (DISABLED - requires node-exporter)
+  # To enable: add node-exporter container
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+  #   scrape_interval: 30s
 
-  # Docker Container Metrics
-  - job_name: 'docker'
-    static_configs:
-      - targets: ['docker-exporter:9323']
-    scrape_interval: 30s
+  # Docker Container Metrics (DISABLED - requires cadvisor)
+  # To enable: add cadvisor container
+  # - job_name: 'docker'
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+  #   scrape_interval: 30s
 
 # Alertmanager configuration (optional)
 # alerting:
