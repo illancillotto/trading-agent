@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.2.0] - 2025-12-10
+
+### 🚀 New Features
+
+#### 📊 Market Microstructure Analysis
+- **Order Book Aggregation**: Combina dati order book da Binance, Bybit, OKX e Coinbase (~86% market coverage)
+- **Whale Detection**: Identifica automaticamente "whale walls" con soglia $500k+
+- **Market Depth Analysis**: Analisi bid/ask imbalance e liquidità cross-exchange
+- **Liquidation Risk Monitoring**: Integrazione Coinglass per analisi rischio cascade (opzionale)
+- **Funding Rate Aggregation**: Sentiment contrarian da funding rates multi-exchange
+- **Long/Short Ratio Analysis**: Crowd positioning analysis per segnali contrarian
+- **Dynamic Support/Resistance**: Livelli chiave derivati da whale walls e cluster liquidazioni
+- **SL/TP Suggestions**: Stop loss e take profit basati su microstructure reale
+- **LLM-Ready Context**: Output formattato `to_prompt_context()` per AI reasoning
+
+#### 🔌 New API Endpoints
+- `GET /api/microstructure/{symbol}`: Contesto microstructure completo
+- `GET /api/microstructure/{symbol}/orderbook`: Solo order book aggregato
+- `GET /api/microstructure/{symbol}/liquidations`: Solo dati liquidazioni
+
+#### 🏗️ Architecture Enhancements
+- **Extended Providers**: Binance, Bybit, OKX, Coinbase estesi con `get_order_book()`
+- **New Coinglass Provider**: Provider dedicato per dati liquidazione aggregati
+- **Microstructure Module**: Nuovo modulo `backend/market_data/microstructure/`
+- **Zero Code Duplication**: Riuso completo provider esistenti
+- **Graceful Degradation**: Sistema funziona anche senza Coinglass configurato
+
+### 📈 Improvements
+- **Market Share Weighting**: Aggregazione ponderata order book per market share reale
+- **Exchange Coverage**: 86% coverage mercato con 4 major exchange
+- **Liquidity Scoring**: Sistema scoring 0-100 per valutare liquidità mercato
+- **Cascade Risk Assessment**: 4 livelli risk (LOW/MEDIUM/HIGH/EXTREME)
+- **Contrarian Signals**: Interpretazione contrarian di funding e long/short ratio
+
+### ⚙️ Configuration
+- **New Config Section**: `microstructure` in `config/market_data.yaml`
+- **Optional Coinglass**: Sistema funziona perfettamente anche senza API key
+- **Configurable Thresholds**: Whale detection e cache TTL configurabili
+- **Exchange Weights**: Pesi market share configurabili per aggregazione
+
+### 🧪 Testing
+- **Test Suite**: Test completi per order book, Coinglass e aggregatore
+- **Mock Support**: Test funzionano anche senza API keys configurate
+- **CI/CD Ready**: Test suite integrabili in pipeline automatizzate
+
+### 📚 Documentation
+- **README Updated**: Nuova sezione completa Market Microstructure Analysis
+- **API Documentation**: Esempi Python e REST per tutti gli endpoint
+- **Setup Guide**: Istruzioni configurazione Coinglass (opzionale)
+- **Architecture Diagram**: Diagramma struttura modulo microstructure
+
+### 🛠 Technical Details
+- **9 New/Modified Files**: 5 provider estesi + 4 nuovi file microstructure
+- **No Breaking Changes**: Totale retrocompatibilità con sistema esistente
+- **Python 3.11+**: Compatibile con Python 3.11 e 3.13
+- **Async/Await**: Implementazione completamente asincrona
+
 ## [0.1.1] - 2025-12-04
 
 ### 🚀 New Features

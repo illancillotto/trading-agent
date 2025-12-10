@@ -1,6 +1,6 @@
 # Trading Agent
 
-**Versione: 0.1.1**
+**Versione: 0.2.0** 🎉
 
 Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.ai/), una piattaforma di trading AI-driven che promuove la competizione tra agenti LLMs. L'obiettivo di questo progetto è sviluppare un agente di trading automatizzato, capace di analizzare dati di mercato, notizie, sentiment e segnali provenienti da grandi movimenti ("whale alert") per prendere decisioni di trading informate.
 
@@ -12,10 +12,11 @@ Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.a
 - **Ispirazione Alpha Arena**: il progetto prende spunto dall'approccio competitivo e AI-driven di Alpha Arena, con l'obiettivo di creare agenti sempre più performanti.
 - **Gestione multi-modello AI**: supporta GPT-5.1, GPT-4o-mini e DeepSeek con selezione dinamica.
 - **Coin Screener Dinamico**: seleziona automaticamente le migliori coin in base a filtri quantitativi.
-- **Rotazione Intelligente & Fasi Separate**: 
+- **Rotazione Intelligente & Fasi Separate**:
   - **Fase Gestione**: Monitora costantemente le posizioni aperte per decisioni di chiusura ottimali.
   - **Fase Scouting**: Analizza a rotazione batch di nuove coin (5 per ciclo) per trovare nuove opportunità senza sovraccaricare l'AI.
 - **Analisi Manuale**: possibilità di eseguire analisi on-demand su specifiche coin senza interrompere il bot.
+- **🆕 Market Microstructure Analysis**: Analisi avanzata order book multi-exchange, whale detection, liquidazioni e sentiment aggregato (v0.2.0).
 
 ## 📊 Dashboard Web
 
@@ -215,6 +216,150 @@ python manual_analysis.py ETH
 ```
 
 Questo script eseguirà l'intero processo decisionale (fetch dati, analisi tecnica, news, sentiment, decisione AI, trend check) e mostrerà il risultato nei log.
+
+## 📊 Market Microstructure Analysis
+
+Il Trading Agent include un modulo avanzato di **Market Microstructure** per analizzare la struttura profonda del mercato attraverso order book multi-exchange, liquidazioni, funding rate e sentiment aggregato.
+
+### 🎯 Caratteristiche
+
+- **Order Book Aggregato**: Combina dati da Binance, Bybit, OKX e Coinbase con pesi di market share
+- **Whale Detection**: Identifica automaticamente "whale walls" (ordini > $500k)
+- **Market Depth Analysis**: Analizza bid/ask imbalance e liquidità
+- **Liquidation Risk**: Monitora rischio cascade tramite Coinglass (opzionale)
+- **Funding Rate Aggregato**: Sentiment contrarian da funding rates multi-exchange
+- **Long/Short Ratio**: Analisi crowd positioning (contrarian signal)
+- **Support/Resistance Dinamici**: Livelli chiave derivati da whale walls e liquidazioni
+- **SL/TP Suggestions**: Stop loss e take profit basati su microstructure
+- **LLM-Ready Context**: Output formattato per prompt AI
+
+### 📡 API Endpoints
+
+```bash
+# Contesto completo microstructure
+GET /api/microstructure/{symbol}
+
+# Solo order book aggregato
+GET /api/microstructure/{symbol}/orderbook
+
+# Solo dati liquidazioni (richiede Coinglass)
+GET /api/microstructure/{symbol}/liquidations
+```
+
+### 🔧 Utilizzo
+
+**Da Python:**
+```python
+from market_data.microstructure import get_microstructure_aggregator
+
+# Ottieni aggregatore
+aggregator = get_microstructure_aggregator()
+
+# Analisi completa
+context = await aggregator.get_full_context("BTC")
+
+# Risultati
+print(f"Bias: {context.overall_bias.value}")
+print(f"Confidence: {context.bias_confidence:.0%}")
+print(f"Warnings: {context.warnings}")
+print(f"Recommendations: {context.recommendations}")
+
+# Formato per LLM
+prompt_context = context.to_prompt_context()
+```
+
+**Da API REST:**
+```bash
+# Analisi BTC completa
+curl http://localhost:8000/api/microstructure/BTC
+
+# Response include:
+# - order_book: Aggregato da 4 exchange
+# - liquidations: Dati Coinglass (se configurato)
+# - funding: Funding rate aggregato
+# - overall_bias: BULLISH/BEARISH/NEUTRAL
+# - warnings: Alert critici
+# - recommendations: Livelli chiave
+```
+
+### ⚙️ Configurazione
+
+**Configurazione Base (Già Funzionante):**
+
+Il sistema funziona **subito** con i provider gratuiti:
+- ✅ Binance, Bybit, OKX, Coinbase (API pubbliche)
+- ✅ Order book aggregato
+- ✅ Funding rate
+- ✅ Open interest
+- ✅ Whale detection
+
+**Configurazione Opzionale - Coinglass (Liquidazioni):**
+
+Per aggiungere dati di liquidazione aggregati:
+
+1. **Registrati su Coinglass** (free tier: 30 req/min):
+   - https://www.coinglass.com/pricing
+
+2. **Aggiungi API key in `.env`:**
+   ```bash
+   # In backend/.env
+   COINGLASS_API_KEY=your_coinglass_api_key_here
+   ```
+
+3. **Riavvia il backend**
+
+**Senza Coinglass**: Il sistema funziona perfettamente, semplicemente il campo `liquidations` sarà `null` nelle response.
+
+### 📈 Exchange Coverage
+
+| Exchange | Order Book | Funding | Open Interest | Market Share |
+|----------|-----------|---------|---------------|--------------|
+| Binance | ✅ | ✅ | ✅ | 45% |
+| OKX | ✅ | ✅ | ✅ | 18% |
+| Bybit | ✅ | ✅ | ✅ | 15% |
+| Coinbase | ✅ | ❌ (spot) | ❌ (spot) | 8% |
+| **Totale** | **~86% copertura mercato** | | | |
+
+### 🧪 Test
+
+```bash
+cd backend
+
+# Test order book providers
+python3 -m unittest market_data.microstructure.test_microstructure.TestOrderBook -v
+
+# Test aggregatore completo
+python3 -m unittest market_data.microstructure.test_microstructure.TestMicrostructureAggregator -v
+
+# Test Coinglass (se configurato)
+python3 -m unittest market_data.microstructure.test_microstructure.TestCoinglass -v
+```
+
+### 📐 Architettura
+
+```
+backend/market_data/
+├── exchanges/              # Provider esistenti ESTESI
+│   ├── base_provider.py   # Base class con metodi microstructure
+│   ├── binance.py         # + get_order_book(), get_open_interest()
+│   ├── bybit.py           # + get_order_book()
+│   ├── okx.py             # + get_order_book(), get_funding_rate()
+│   ├── coinbase.py        # + get_order_book()
+│   └── coinglass.py       # NUOVO - Liquidation data provider
+│
+└── microstructure/        # NUOVO - Aggregation layer
+    ├── models.py          # Dataclasses (AggregatedOrderBook, etc.)
+    ├── aggregator.py      # MicrostructureAggregator (riusa provider)
+    └── __init__.py
+```
+
+### 💡 Design Principles
+
+- **Zero Duplicazione**: Riusa completamente i provider esistenti
+- **Graceful Degradation**: Funziona anche se alcuni provider sono offline
+- **Modular**: Ogni componente è opzionale e indipendente
+- **Extensible**: Facile aggiungere nuovi provider o metriche
+- **LLM-Optimized**: Output formattato per AI reasoning
 
 ## Video di presentazione
 
