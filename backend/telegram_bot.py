@@ -73,6 +73,16 @@ class TradingTelegramBot:
         self.trading_agent = agent
         logger.info("✅ Trading Agent collegato al bot Telegram")
 
+    async def _send_message(self, chat_id: int, text: str, parse_mode: str = "HTML", reply_markup=None):
+        """Helper per inviare messaggi sia da comando sia da callback."""
+        from telegram.constants import ParseMode
+        await self.application.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML if parse_mode == "HTML" else parse_mode,
+            reply_markup=reply_markup
+        )
+
     def _is_authorized(self, update: Update) -> bool:
         """Verifica se l'utente è autorizzato"""
         if not update.effective_chat:
@@ -99,7 +109,8 @@ class TradingTelegramBot:
         await self._log_command(update, "start")
 
         if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
+            if update.message:
+                await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
             return
 
         # Determina stato e network
@@ -140,7 +151,27 @@ class TradingTelegramBot:
 
 <i>Bot pronto per gestire il tuo trading! 🚀</i>"""
 
-        await update.message.reply_text(welcome_msg, parse_mode="HTML")
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📊 Status", callback_data="cmd:status"),
+                InlineKeyboardButton("💰 Balance", callback_data="cmd:balance"),
+                InlineKeyboardButton("📂 Posizioni", callback_data="cmd:positions"),
+            ],
+            [
+                InlineKeyboardButton("🧾 Today", callback_data="cmd:today"),
+                InlineKeyboardButton("🔢 Token", callback_data="cmd:tokens"),
+                InlineKeyboardButton("🪵 Log", callback_data="cmd:logs"),
+            ],
+            [
+                InlineKeyboardButton("🆘 Help", callback_data="cmd:help"),
+                InlineKeyboardButton("🛑 Stop", callback_data="cmd:stop"),
+                InlineKeyboardButton("▶️ Resume", callback_data="cmd:resume"),
+            ],
+        ])
+
+        chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+        if chat_id:
+            await self._send_message(chat_id, welcome_msg, parse_mode="HTML", reply_markup=keyboard)
 
     async def _get_recent_logs(self, lines: int = 20) -> str:
         """Legge le ultime N righe del log di sistema."""
@@ -167,7 +198,9 @@ class TradingTelegramBot:
         await self._log_command(update, "logs")
 
         if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
             return
 
         text = await self._get_recent_logs()
@@ -190,8 +223,8 @@ class TradingTelegramBot:
             except Exception as e:
                 logger.warning(f"⚠️ Impossibile aggiornare messaggio log esistente (chat {chat_id}): {e}")
 
-        sent = await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
         if chat_id:
+            sent = await self.application.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
             self.logs_message_ids[chat_id] = sent.message_id
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -199,11 +232,15 @@ class TradingTelegramBot:
         await self._log_command(update, "status")
 
         if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
             return
 
         if not self.trading_agent:
-            await update.message.reply_text("⚪ Trading Agent non connesso.")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, "⚪ Trading Agent non connesso.")
             return
 
         # Get status info
@@ -250,25 +287,33 @@ class TradingTelegramBot:
 
 <i>Il bot sta {('eseguendo' if is_running else 'aspettando')} il trading automatico.</i>"""
 
-        await update.message.reply_text(msg, parse_mode="HTML")
+        chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+        if chat_id:
+            await self._send_message(chat_id, msg, parse_mode="HTML")
 
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler per comando /balance"""
         await self._log_command(update, "balance")
 
         if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
             return
 
         if not self.trading_agent:
-            await update.message.reply_text("⚪ Trading Agent non connesso.")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, "⚪ Trading Agent non connesso.")
             return
 
         try:
             # Get balance from trading agent
             trader = getattr(self.trading_agent, 'trader', None)
             if not trader:
-                await update.message.reply_text("⚠️ Trader non disponibile.")
+                chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+                if chat_id:
+                    await self._send_message(chat_id, "⚠️ Trader non disponibile.")
                 return
 
             # Fetch current account state
@@ -295,11 +340,15 @@ class TradingTelegramBot:
 
 <i>Aggiornato al: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}</i>"""
 
-            await update.message.reply_text(msg, parse_mode="HTML")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, msg, parse_mode="HTML")
 
         except Exception as e:
             logger.error(f"❌ Errore nel recupero balance: {e}")
-            await update.message.reply_text(f"❌ Errore nel recupero del saldo: {str(e)}")
+            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
+            if chat_id:
+                await self._send_message(chat_id, f"❌ Errore nel recupero del saldo: {str(e)}")
 
     async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler per comando /positions"""
