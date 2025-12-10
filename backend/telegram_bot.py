@@ -47,6 +47,9 @@ class TradingTelegramBot:
         # Notifier for push notifications (compatibility with existing system)
         self.notifier = TelegramNotifier(token=self.token, chat_id=self.chat_id)
 
+        # Persisted message id for live log view
+        self.logs_message_id: Optional[int] = None
+
         if not self.enabled:
             logger.warning("⚠️ Telegram bot non configurato (mancano TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID)")
         else:
@@ -125,6 +128,55 @@ class TradingTelegramBot:
 <i>Bot pronto per gestire il tuo trading! 🚀</i>"""
 
         await update.message.reply_text(welcome_msg, parse_mode="HTML")
+
+    async def _get_recent_logs(self, lines: int = 20) -> str:
+        """Legge le ultime N righe del log di sistema."""
+        log_path = os.getenv(
+            "LOG_FILE",
+            os.path.join(os.path.dirname(__file__), "trading_agent.log")
+        )
+        if not os.path.exists(log_path):
+            return "⚠️ Log file non trovato"
+
+        try:
+            with open(log_path, "r") as f:
+                content = f.readlines()
+            tail = content[-lines:] if len(content) >= lines else content
+            formatted = "".join(tail).rstrip()
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            return f"🪵 <b>System Logs</b>\n\n<code>{formatted}</code>\n\n⏱ Aggiornato: {ts}"
+        except Exception as e:
+            logger.error(f"Errore lettura log: {e}")
+            return f"❌ Errore lettura log: {e}"
+
+    async def cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Messaggio persistente con log e bottone refresh."""
+        await self._log_command(update, "logs")
+
+        if not self._is_authorized(update):
+            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
+            return
+
+        text = await self._get_recent_logs()
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔄 Aggiorna", callback_data="refresh_logs")]]
+        )
+
+        if self.logs_message_id:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=self.chat_id,
+                    message_id=self.logs_message_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                return
+            except Exception as e:
+                logger.warning(f"⚠️ Impossibile aggiornare messaggio log esistente: {e}")
+
+        sent = await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+        self.logs_message_id = sent.message_id
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler per comando /status"""
@@ -595,6 +647,17 @@ Il bot invierà notifiche per:
 
         elif query.data == "cancel_stop":
             await query.edit_message_text("✅ Operazione annullata. Il trading continua normalmente.")
+        elif query.data == "refresh_logs":
+            text = await self._get_recent_logs()
+            keyboard = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔄 Aggiorna", callback_data="refresh_logs")]]
+            )
+            try:
+                await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
+                # Aggiorna l'id se non già salvato (es. prima chiamata da callback)
+                self.logs_message_id = query.message.message_id if query.message else self.logs_message_id
+            except Exception as e:
+                logger.error(f"❌ Errore aggiornamento log: {e}")
 
     # ==================== NOTIFICATION METHODS (Compatibility) ====================
 
@@ -707,6 +770,7 @@ Trading fermato automaticamente per protezione del capitale."""
             self.application.add_handler(CommandHandler("today", self.cmd_today))
             self.application.add_handler(CommandHandler("config", self.cmd_config))
             self.application.add_handler(CommandHandler("tokens", self.cmd_tokens))
+            self.application.add_handler(CommandHandler("logs", self.cmd_logs))
             self.application.add_handler(CommandHandler("stop", self.cmd_stop))
             self.application.add_handler(CommandHandler("resume", self.cmd_resume))
             self.application.add_handler(CommandHandler("help", self.cmd_help))
