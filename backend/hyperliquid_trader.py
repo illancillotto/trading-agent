@@ -575,6 +575,19 @@ class HyperLiquidTrader:
         """
         try:
             from hyperliquid.utils.signing import OrderRequest
+            # Allinea la size al tick/precisione consentita da Hyperliquid
+            symbol_info = next((p for p in self.meta.get("universe", []) if p.get("name") == symbol), None)
+            sz_decimals = int(symbol_info.get("szDecimals", 8)) if symbol_info else 8
+            quantizer = Decimal(10) ** -sz_decimals
+            size_decimal = Decimal(str(position_size)).quantize(quantizer, rounding=ROUND_DOWN)
+            if size_decimal <= 0:
+                raise ValueError(f"position_size too small after rounding: {size_decimal}")
+            rounded_size = float(size_decimal)
+            if abs(rounded_size - position_size) > 0:
+                logger.info(
+                    f"🔧 Size quantized for {symbol}: {position_size} -> {rounded_size} (decimals={sz_decimals})"
+                )
+            position_size = rounded_size
 
             orders = []
 
