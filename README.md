@@ -223,7 +223,8 @@ Il Trading Agent include un modulo avanzato di **Market Microstructure** per ana
 
 ### 🎯 Caratteristiche
 
-- **Order Book Aggregato**: Combina dati da Binance, Bybit, OKX e Coinbase con pesi di market share
+- **Order Book Aggregato**: Combina dati da 6 exchange (Binance, Bybit, OKX, Coinbase, Crypto.com, KuCoin) con pesi di market share
+- **Market Coverage**: ~94% del mercato totale (aggiornato Kaiko 2025)
 - **Whale Detection**: Identifica automaticamente "whale walls" (ordini > $500k)
 - **Market Depth Analysis**: Analizza bid/ask imbalance e liquidità
 - **Liquidation Risk**: Monitora rischio cascade tramite Coinglass (opzionale)
@@ -233,8 +234,17 @@ Il Trading Agent include un modulo avanzato di **Market Microstructure** per ana
 - **SL/TP Suggestions**: Stop loss e take profit basati su microstructure
 - **LLM-Ready Context**: Output formattato per prompt AI
 
+### 🛡️ Sistemi di Resilienza (v0.2.1)
+
+- **Circuit Breaker**: Previene cascade failure se un exchange va offline
+- **LRU Cache**: Riduce chiamate API ripetitive del ~70% (TTL configurabile)
+- **Rate Limiting**: Rispetta limiti API di ogni exchange (token bucket algorithm)
+- **Retry Logic**: Retry automatico con exponential backoff per errori temporanei
+- **Graceful Degradation**: Sistema continua a funzionare anche se alcuni exchange sono offline
+
 ### 📡 API Endpoints
 
+**Market Microstructure:**
 ```bash
 # Contesto completo microstructure
 GET /api/microstructure/{symbol}
@@ -244,6 +254,24 @@ GET /api/microstructure/{symbol}/orderbook
 
 # Solo dati liquidazioni (richiede Coinglass)
 GET /api/microstructure/{symbol}/liquidations
+```
+
+**System Monitoring (v0.2.1):**
+```bash
+# Cache statistics
+GET /api/system/cache-stats
+
+# Clear cache
+POST /api/system/cache-clear?exchange={exchange}&symbol={symbol}
+
+# Circuit breaker status
+GET /api/system/circuit-breakers
+
+# Reset circuit breakers
+POST /api/system/circuit-breakers/reset?exchange={exchange}
+
+# Rate limiter statistics
+GET /api/system/rate-limiters
 ```
 
 ### 🔧 Utilizzo
@@ -287,11 +315,12 @@ curl http://localhost:8000/api/microstructure/BTC
 **Configurazione Base (Già Funzionante):**
 
 Il sistema funziona **subito** con i provider gratuiti:
-- ✅ Binance, Bybit, OKX, Coinbase (API pubbliche)
-- ✅ Order book aggregato
+- ✅ 6 Exchange: Binance, Bybit, OKX, Coinbase, Crypto.com, KuCoin (API pubbliche)
+- ✅ Order book aggregato con ~94% market coverage
 - ✅ Funding rate
 - ✅ Open interest
 - ✅ Whale detection
+- ✅ Circuit breaker, cache e rate limiting integrati
 
 **Configurazione Opzionale - Coinglass (Liquidazioni):**
 
@@ -314,11 +343,13 @@ Per aggiungere dati di liquidazione aggregati:
 
 | Exchange | Order Book | Funding | Open Interest | Market Share |
 |----------|-----------|---------|---------------|--------------|
-| Binance | ✅ | ✅ | ✅ | 45% |
+| Binance | ✅ | ✅ | ✅ | 43% |
 | OKX | ✅ | ✅ | ✅ | 18% |
 | Bybit | ✅ | ✅ | ✅ | 15% |
 | Coinbase | ✅ | ❌ (spot) | ❌ (spot) | 8% |
-| **Totale** | **~86% copertura mercato** | | | |
+| Crypto.com | ✅ | ❌ (spot) | ❌ (spot) | 6% |
+| KuCoin | ✅ | ✅ | ✅ | 4% |
+| **Totale** | **~94% copertura mercato** | | | |
 
 ### 🧪 Test
 

@@ -6,16 +6,16 @@ providers:
   - bybit
   - okx
   - coinbase
+  - kucoin       # Abilitato per microstructure (4% market share)
+  - cryptocom    # Abilitato per microstructure (6% market share)
   #- kraken
   #- bitget
   #- gate
-  #- kucoin
   #- htx
   - mexc
-  #- crypto_com
   #- bingx
   #- uniswap
-  - coinglass  # NUOVO - per liquidazioni aggregate
+  - coinglass    # Per liquidazioni aggregate
 
 timeout: 5  # Timeout globale in secondi per le richieste
 
@@ -31,9 +31,12 @@ microstructure:
   cache_ttl_funding: 60
   cache_ttl_oi: 120               # 2 minuti
 
-  # Exchange weights per aggregazione ponderata
+  # Exchange weights per aggregazione ponderata (Kaiko 2025 market share data)
+  # Total coverage: ~94% market
   exchange_weights:
-    binance: 0.45
-    okx: 0.18
-    bybit: 0.15
-    coinbase: 0.08
+    binance: 0.43      # 43% (era 45%, ridotto per fare spazio)
+    okx: 0.18          # 18% (invariato)
+    bybit: 0.15        # 15% (invariato)
+    coinbase: 0.08     # 8% (invariato)
+    cryptocom: 0.06    # 6% (nuovo - Crypto.com)
+    kucoin: 0.04       # 4% (nuovo - KuCoin)

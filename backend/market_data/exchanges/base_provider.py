@@ -51,6 +51,9 @@ class BaseProvider(ABC):
     Ogni nuovo exchange deve ereditare da questa classe.
     """
 
+    # Ogni provider deve definire il proprio EXCHANGE_NAME
+    EXCHANGE_NAME: str = "Unknown"
+
     @abstractmethod
     def check_availability(self) -> bool:
         """
@@ -126,6 +129,87 @@ class BaseProvider(ABC):
                 'source': data.get('source', 'unknown')
             }
         return None
+
+    async def safe_get_order_book(
+        self,
+        symbol: str,
+        depth: int = 50,
+        use_cache: bool = True,
+        use_circuit_breaker: bool = True,
+        use_rate_limiter: bool = True
+    ) -> Optional[OrderBookSnapshot]:
+        """
+        Ottiene order book con circuit breaker, cache e rate limiting integrati.
+
+        Questo metodo wrappa get_order_book() con resilienza:
+        - Cache: Riduce chiamate API ripetitive
+        - Circuit Breaker: Previene cascade failure
+        - Rate Limiter: Rispetta limiti API
+
+        Args:
+            symbol: Simbolo base
+            depth: Livelli richiesti
+            use_cache: Abilita cache (default True)
+            use_circuit_breaker: Abilita circuit breaker (default True)
+            use_rate_limiter: Abilita rate limiter (default True)
+
+        Returns:
+            OrderBookSnapshot o None
+        """
+        # Import lazy per evitare circular imports
+        from market_data.microstructure.cache import get_cache
+        from market_data.microstructure.circuit_breaker import CircuitBreakerRegistry
+        from market_data.microstructure.rate_limiter import RateLimiterRegistry
+        from market_data.microstructure.utils import CircuitBreakerOpenError
+        import logging
+
+        logger = logging.getLogger(__name__)
+        exchange_name = self.EXCHANGE_NAME
+
+        # 1. Check cache
+        if use_cache:
+            cache = get_cache()
+            cached = cache.get(exchange_name, symbol)
+            if cached:
+                logger.debug(f"Cache hit: {exchange_name}:{symbol}")
+                return cached
+
+        # 2. Check circuit breaker
+        if use_circuit_breaker:
+            breaker_registry = CircuitBreakerRegistry()
+            breaker = breaker_registry.get_breaker(exchange_name)
+
+            if not breaker.can_execute():
+                logger.warning(f"Circuit breaker OPEN for {exchange_name}, skipping request")
+                raise CircuitBreakerOpenError(exchange_name, "Circuit breaker is open")
+
+        # 3. Apply rate limiting
+        if use_rate_limiter:
+            limiter_registry = RateLimiterRegistry()
+            limiter = limiter_registry.get_limiter(exchange_name.lower())
+            await limiter.acquire()
+
+        # 4. Execute actual request
+        try:
+            result = await self.get_order_book(symbol, depth)
+
+            # Record success
+            if use_circuit_breaker and result:
+                breaker.record_success()
+
+            # Update cache
+            if use_cache and result:
+                cache.set(exchange_name, symbol, result)
+
+            return result
+
+        except Exception as e:
+            # Record failure
+            if use_circuit_breaker:
+                breaker.record_failure(e)
+
+            logger.error(f"{exchange_name} safe_get_order_book error for {symbol}: {e}")
+            raise
 
     def _calculate_order_book_metrics(
         self,

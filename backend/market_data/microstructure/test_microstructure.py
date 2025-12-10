@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from market_data.exchanges.binance import BinanceProvider
 from market_data.exchanges.bybit import BybitProvider
 from market_data.exchanges.okx import OkxProvider
+from market_data.exchanges.cryptocom import CryptoComProvider
+from market_data.exchanges.kucoin import KucoinProvider
 from market_data.exchanges.coinglass import CoinglassProvider
 from market_data.microstructure.aggregator import MicrostructureAggregator
 
@@ -54,6 +56,36 @@ class TestOrderBook(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(ob)
         print(f"✅ OKX BTC: Bid ${ob.best_bid:,.0f} | Ask ${ob.best_ask:,.0f}")
+
+    async def test_cryptocom_orderbook(self):
+        logger.info("Testing Crypto.com Order Book...")
+        provider = CryptoComProvider()
+        ob = await provider.get_order_book("BTC")
+
+        self.assertIsNotNone(ob, "Crypto.com order book should not be None")
+        self.assertEqual(ob.exchange, "Crypto.com")
+        self.assertGreater(ob.best_bid, 0)
+        self.assertGreater(ob.best_ask, 0)
+        self.assertGreater(ob.best_ask, ob.best_bid)  # Ask > Bid
+        self.assertGreater(len(ob.bids), 0)
+        self.assertGreater(len(ob.asks), 0)
+
+        print(f"✅ Crypto.com BTC: Bid ${ob.best_bid:,.0f} | Ask ${ob.best_ask:,.0f} | Spread {ob.spread_pct:.4f}%")
+
+    async def test_kucoin_orderbook(self):
+        logger.info("Testing KuCoin Order Book...")
+        provider = KucoinProvider()
+        ob = await provider.get_order_book("BTC")
+
+        self.assertIsNotNone(ob, "KuCoin order book should not be None")
+        self.assertEqual(ob.exchange, "KuCoin")
+        self.assertGreater(ob.best_bid, 0)
+        self.assertGreater(ob.best_ask, 0)
+        self.assertGreater(ob.best_ask, ob.best_bid)
+        self.assertGreater(len(ob.bids), 0)
+        self.assertGreater(len(ob.asks), 0)
+
+        print(f"✅ KuCoin BTC: Bid ${ob.best_bid:,.0f} | Ask ${ob.best_ask:,.0f} | Spread {ob.spread_pct:.4f}%")
 
 
 class TestCoinglass(unittest.IsolatedAsyncioTestCase):

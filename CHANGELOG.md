@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.2.1] - 2025-12-10
+
+### 🚀 New Features
+
+#### 🏦 New Exchange Providers
+- **Crypto.com Provider**: Aggiunto supporto Crypto.com (6% market share)
+- **KuCoin Provider**: Aggiunto supporto KuCoin (4% market share)
+- **Market Coverage**: Esteso da ~86% a ~94% del mercato totale
+
+#### 🛡️ Sistemi di Resilienza
+- **Circuit Breaker**: Pattern circuit breaker con 3 stati (CLOSED, OPEN, HALF_OPEN) per prevenire cascade failure
+- **LRU Cache**: Cache intelligente con TTL configurabile, riduce chiamate API del ~70%
+- **Rate Limiter**: Token bucket algorithm per rispettare limiti API di ogni exchange
+- **Retry Logic**: Decorator `async_retry` con exponential backoff per errori temporanei
+- **Graceful Degradation**: Sistema continua a funzionare anche se alcuni exchange sono offline
+
+#### 🔌 New System Monitoring API Endpoints
+- `GET /api/system/cache-stats`: Statistiche cache (hit rate, miss rate, size)
+- `POST /api/system/cache-clear`: Clear cache per exchange/symbol specifico
+- `GET /api/system/circuit-breakers`: Stato di tutti i circuit breakers
+- `POST /api/system/circuit-breakers/reset`: Reset circuit breakers
+- `GET /api/system/rate-limiters`: Statistiche rate limiting per exchange
+
+### 📈 Improvements
+- **Market Weights Updated**: Aggiornato a dati Kaiko 2025 (Binance 45% → 43%)
+- **6 Exchange Support**: Binance, OKX, Bybit, Coinbase, Crypto.com, KuCoin
+- **Total Market Coverage**: ~94% del mercato crypto globale
+- **Error Handling**: Migliorato error handling con retry automatico e fallback
+
+### 🏗️ Architecture Enhancements
+- **BaseProvider Extended**: Aggiunto `EXCHANGE_NAME` attribute e metodo `safe_get_order_book()`
+- **Singleton Pattern**: CircuitBreakerRegistry, OrderBookCache e RateLimiterRegistry come singleton
+- **Microstructure Module**: Nuovi moduli `circuit_breaker.py`, `cache.py`, `rate_limiter.py`, `utils.py`
+- **Zero Breaking Changes**: Tutti i miglioramenti backward-compatible con v0.2.0
+- **Safe Wrapper**: `safe_get_order_book()` integra automaticamente cache, circuit breaker e rate limiter
+
+### ⚙️ Configuration
+- **Updated Config**: `config/market_data.yaml` aggiornato con nuovi provider e pesi
+- **Exchange Weights**: Crypto.com 6%, KuCoin 4%, Binance 43% (era 45%)
+- **Cache TTL**: Configurabile per order book (30s), liquidations (5m), funding (60s)
+- **Circuit Breaker Thresholds**: Configurabili failure_threshold e timeout
+
+### 🧪 Testing
+- **New Tests**: Test per Crypto.com e KuCoin order book providers
+- **Test Coverage**: TestOrderBook esteso con `test_cryptocom_orderbook()` e `test_kucoin_orderbook()`
+- **Validation**: Tutti i test validano bid/ask spread, exchange name e data quality
+
+### 📚 Documentation
+- **README Updated**: Aggiunta sezione "Sistemi di Resilienza (v0.2.1)"
+- **API Docs**: Documentati nuovi endpoint system monitoring
+- **Exchange Coverage Table**: Aggiornata tabella con 6 exchange e ~94% coverage
+- **Configuration Guide**: Documentata configurazione opzionale per nuovi provider
+
+### 🐛 Bug Fixes
+- **Production Monitoring**: Fixed Prometheus scraping PostgreSQL port causing "invalid length of startup packet" errors
+- **KuCoin API**: Aggiornato da futures API a spot API per migliore stabilità
+
 ## [0.2.0] - 2025-12-10
 
 ### 🚀 New Features

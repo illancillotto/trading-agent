@@ -1229,6 +1229,97 @@ async def get_liquidations(symbol: str):
 
 
 # =====================
+# System Monitoring Endpoints (Cache, Circuit Breaker, Rate Limiter)
+# =====================
+
+@app.get("/api/system/cache-stats")
+async def get_cache_stats():
+    """Ottiene statistiche cache order book"""
+    try:
+        from market_data.microstructure.cache import get_cache
+        cache = get_cache()
+        return cache.get_stats()
+    except Exception as e:
+        logger.error(f"Error fetching cache stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/cache-clear")
+async def clear_cache(exchange: Optional[str] = None, symbol: Optional[str] = None):
+    """
+    Invalida cache order book.
+
+    Args:
+        exchange: Nome exchange (opzionale, clear tutto se omesso)
+        symbol: Simbolo (opzionale, richiede exchange se specificato)
+    """
+    try:
+        from market_data.microstructure.cache import get_cache
+        cache = get_cache()
+        cache.invalidate(exchange, symbol)
+
+        message = "All cache cleared"
+        if exchange and symbol:
+            message = f"Cache cleared for {exchange}:{symbol}"
+        elif exchange:
+            message = f"Cache cleared for all {exchange} pairs"
+
+        return {"status": "success", "message": message}
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/system/circuit-breakers")
+async def get_circuit_breakers():
+    """Ottiene stato di tutti i circuit breakers"""
+    try:
+        from market_data.microstructure.circuit_breaker import CircuitBreakerRegistry
+        registry = CircuitBreakerRegistry()
+        return registry.get_all_stats()
+    except Exception as e:
+        logger.error(f"Error fetching circuit breaker stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/system/circuit-breakers/reset")
+async def reset_circuit_breakers(exchange: Optional[str] = None):
+    """
+    Reset circuit breakers.
+
+    Args:
+        exchange: Nome exchange (opzionale, reset tutti se omesso)
+    """
+    try:
+        from market_data.microstructure.circuit_breaker import CircuitBreakerRegistry
+        registry = CircuitBreakerRegistry()
+
+        if exchange:
+            registry.reset_exchange(exchange)
+            message = f"Circuit breaker reset for {exchange}"
+        else:
+            registry.reset_all()
+            message = "All circuit breakers reset"
+
+        return {"status": "success", "message": message}
+    except Exception as e:
+        logger.error(f"Error resetting circuit breakers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/system/rate-limiters")
+async def get_rate_limiters():
+    """Ottiene statistiche rate limiters"""
+    try:
+        from market_data.microstructure.rate_limiter import RateLimiterRegistry
+        registry = RateLimiterRegistry()
+        return registry.get_all_stats()
+    except Exception as e:
+        logger.error(f"Error fetching rate limiter stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================
 # Coin Screener API Endpoints
 # =====================
 

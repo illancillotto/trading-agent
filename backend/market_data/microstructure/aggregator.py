@@ -20,18 +20,23 @@ from ..exchanges.binance import BinanceProvider
 from ..exchanges.bybit import BybitProvider
 from ..exchanges.okx import OkxProvider
 from ..exchanges.coinbase import CoinbaseProvider
+from ..exchanges.cryptocom import CryptoComProvider
+from ..exchanges.kucoin import KucoinProvider
 from ..exchanges.coinglass import CoinglassProvider, LiquidationRisk
 from ..exchanges.base_provider import OrderBookSnapshot, OrderBookLevel
 
 logger = logging.getLogger(__name__)
 
 
-# Market share weights per aggregazione ponderata
+# Market share weights per aggregazione ponderata (Kaiko 2025 data)
+# Total coverage: ~94% market
 EXCHANGE_WEIGHTS = {
-    'Binance': 0.45,
-    'OKX': 0.18,
-    'Bybit': 0.15,
-    'Coinbase': 0.08
+    'Binance': 0.43,      # 43% (era 45%)
+    'OKX': 0.18,          # 18% (invariato)
+    'Bybit': 0.15,        # 15% (invariato)
+    'Coinbase': 0.08,     # 8% (invariato)
+    'Crypto.com': 0.06,   # 6% (nuovo)
+    'KuCoin': 0.04        # 4% (nuovo)
 }
 
 # Soglia per whale detection (USD)
@@ -45,12 +50,14 @@ class MicrostructureAggregator:
     """
 
     def __init__(self):
-        # RIUSA provider esistenti
+        # RIUSA provider esistenti + nuovi provider
         self.providers = {
             'binance': BinanceProvider(),
             'bybit': BybitProvider(),
             'okx': OkxProvider(),
-            'coinbase': CoinbaseProvider()
+            'coinbase': CoinbaseProvider(),
+            'cryptocom': CryptoComProvider(),
+            'kucoin': KucoinProvider()
         }
 
         # Coinglass per dati aggregati liquidazioni
@@ -59,9 +66,18 @@ class MicrostructureAggregator:
         available = [name for name, p in self.providers.items() if p.check_availability()]
         coinglass_status = "enabled" if self.coinglass.check_availability() else "disabled (no API key)"
 
+        # Calcola coverage totale
+        total_coverage = sum(
+            EXCHANGE_WEIGHTS.get(p.EXCHANGE_NAME, 0)
+            for p in self.providers.values()
+            if p.check_availability()
+        )
+
         logger.info(
             f"🔬 MicrostructureAggregator initialized | "
-            f"Order Book: {available} | Coinglass: {coinglass_status}"
+            f"Order Book providers: {len(available)}/6 | "
+            f"Market coverage: ~{total_coverage:.0%} | "
+            f"Coinglass: {coinglass_status}"
         )
 
     async def get_full_context(
@@ -169,9 +185,12 @@ class MicrostructureAggregator:
         return context
 
     async def _fetch_aggregated_orderbook(self, symbol: str) -> Optional[AggregatedOrderBook]:
-        """Fetch e aggrega order book da tutti i provider"""
+        """
+        Fetch e aggrega order book da tutti i provider.
+        Usa safe_get_order_book() per circuit breaker, cache e rate limiting.
+        """
         tasks = {
-            name: provider.get_order_book(symbol)
+            name: provider.safe_get_order_book(symbol, use_cache=True, use_circuit_breaker=True, use_rate_limiter=True)
             for name, provider in self.providers.items()
         }
 
@@ -181,8 +200,9 @@ class MicrostructureAggregator:
                 result = await task
                 if result:
                     snapshots[name] = result
+                    logger.debug(f"✅ Order book fetched from {name}")
             except Exception as e:
-                logger.warning(f"Order book fetch failed for {name}: {e}")
+                logger.warning(f"❌ Order book fetch failed for {name}: {e}")
 
         if not snapshots:
             logger.warning(f"No order book data available for {symbol}")
