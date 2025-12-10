@@ -633,7 +633,7 @@ async def get_trade_details_html(trade_id: int):
             SELECT
                 bo.operation, bo.direction, bo.symbol, bo.target_portion_of_balance,
                 bo.leverage, bo.raw_payload, bo.created_at,
-                ac.system_prompt, ac.model_name, ac.raw_response
+                ac.system_prompt, ac.raw_response
             FROM bot_operations bo
             LEFT JOIN ai_contexts ac ON bo.context_id = ac.id
             WHERE bo.id = %s
@@ -698,8 +698,8 @@ async def get_trade_details_html(trade_id: int):
                             'raw_payload': op_row[5],
                             'created_at': op_row[6],
                             'system_prompt': op_row[7],
-                            'model_name': op_row[8],
-                            'raw_response': op_row[9]
+                            'model_name': None,  # Non presente nello schema attuale
+                            'raw_response': op_row[8]
                         }
 
                     # Get indicators
