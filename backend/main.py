@@ -1160,6 +1160,75 @@ async def get_market_data_aggregate(symbol: str = "BTC"):
 
 
 # =====================
+# MARKET MICROSTRUCTURE ENDPOINTS
+# =====================
+
+@app.get("/api/microstructure/{symbol}")
+async def get_microstructure(symbol: str):
+    """
+    Ottiene contesto completo di market microstructure per un simbolo.
+
+    Args:
+        symbol: Simbolo crypto (es. 'BTC', 'ETH')
+
+    Returns:
+        MarketMicrostructureContext completo con order book, liquidazioni, etc.
+    """
+    try:
+        from market_data.microstructure import get_microstructure_aggregator
+        aggregator = get_microstructure_aggregator()
+        context = await aggregator.get_full_context(symbol.upper())
+        return context.to_dict()
+    except Exception as e:
+        logger.error(f"Error fetching microstructure for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/microstructure/{symbol}/orderbook")
+async def get_orderbook(symbol: str):
+    """Ottiene solo order book aggregato"""
+    try:
+        from market_data.microstructure import get_microstructure_aggregator
+        aggregator = get_microstructure_aggregator()
+        context = await aggregator.get_full_context(
+            symbol.upper(),
+            include_liquidations=False,
+            include_funding=False,
+            include_oi=False,
+            include_ls_ratio=False
+        )
+        if context.order_book:
+            return context.order_book.to_dict()
+        raise HTTPException(status_code=404, detail="Order book not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/microstructure/{symbol}/liquidations")
+async def get_liquidations(symbol: str):
+    """Ottiene dati liquidazioni aggregati"""
+    try:
+        from market_data.microstructure import get_microstructure_aggregator
+        aggregator = get_microstructure_aggregator()
+        context = await aggregator.get_full_context(
+            symbol.upper(),
+            include_orderbook=False,
+            include_funding=False,
+            include_oi=False,
+            include_ls_ratio=False
+        )
+        if context.liquidations:
+            return context.liquidations.to_dict()
+        raise HTTPException(status_code=404, detail="Liquidations not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================
 # Coin Screener API Endpoints
 # =====================
 

@@ -15,5 +15,25 @@ providers:
   #- crypto_com
   #- bingx
   #- uniswap
+  - coinglass  # NUOVO - per liquidazioni aggregate
 
 timeout: 5  # Timeout globale in secondi per le richieste
+
+# NUOVA SEZIONE - Microstructure settings
+microstructure:
+  enabled: true
+  whale_threshold_usd: 500000     # Soglia per whale wall detection
+  order_book_depth: 50            # Livelli order book da richiedere
+
+  # Cache TTL (secondi)
+  cache_ttl_orderbook: 30
+  cache_ttl_liquidations: 300     # 5 minuti
+  cache_ttl_funding: 60
+  cache_ttl_oi: 120               # 2 minuti
+
+  # Exchange weights per aggregazione ponderata
+  exchange_weights:
+    binance: 0.45
+    okx: 0.18
+    bybit: 0.15
+    coinbase: 0.08
