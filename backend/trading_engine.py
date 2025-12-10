@@ -7,7 +7,7 @@ import sys
 import os
 import json
 from datetime import datetime, timezone
-from typing import Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 
 from dotenv import load_dotenv
 
