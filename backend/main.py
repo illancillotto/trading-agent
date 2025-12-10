@@ -1587,8 +1587,8 @@ def on_startup():
                 try:
                     if notifier.enabled:
                         logger.info("📤 Invio notifica di avvio via Telegram...")
-                        # Get dashboard URL from environment
-                        dashboard_url = os.getenv("PUBLIC_API_URL")
+                        # Link dashboard: prefer dedicated var, fallback to public API URL
+                        dashboard_url = os.getenv("PUBLIC_DASHBOARD_URL") or os.getenv("PUBLIC_API_URL")
 
                         notifier.notify_startup(
                             testnet=CONFIG["TESTNET"],
