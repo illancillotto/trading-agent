@@ -986,6 +986,16 @@ def close_trade(
         fees_usd: Trading fees
         slippage_pct: Slippage percentage
     """
+    # Normalize potential numpy types to plain Python floats
+    def _f(x):
+        return float(x) if x is not None else None
+
+    exit_price = _f(exit_price)
+    pnl_usd = _f(pnl_usd)
+    pnl_pct = _f(pnl_pct)
+    fees_usd = _f(fees_usd)
+    slippage_pct = _f(slippage_pct)
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
