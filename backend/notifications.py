@@ -5,7 +5,7 @@ import os
 import logging
 import requests
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,35 +18,52 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 class TelegramNotifier:
     """Gestisce le notifiche Telegram"""
 
-    def __init__(self, token: str = None, chat_id: str = None):
+    def __init__(self, token: str = None, chat_id: str = None, chat_ids: Optional[List[str]] = None):
         self.token = token or TELEGRAM_BOT_TOKEN
-        self.chat_id = chat_id or TELEGRAM_CHAT_ID
-        self.enabled = bool(self.token and self.chat_id)
+
+        # Supporta più chat ID (TELEGRAM_CHAT_IDS= id1,id2,...) con fallback singolo
+        env_chat_ids = os.getenv("TELEGRAM_CHAT_IDS")
+        parsed_env = []
+        if env_chat_ids:
+            parsed_env = [c.strip() for c in env_chat_ids.split(",") if c.strip()]
+
+        if chat_ids:
+            self.chat_ids = chat_ids
+        elif parsed_env:
+            self.chat_ids = parsed_env
+        elif chat_id or TELEGRAM_CHAT_ID:
+            self.chat_ids = [chat_id or TELEGRAM_CHAT_ID]
+        else:
+            self.chat_ids = []
+
+        self.enabled = bool(self.token and self.chat_ids)
 
         if not self.enabled:
-            logger.warning("⚠️ Telegram notifier non configurato (mancano TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID)")
+            logger.warning("⚠️ Telegram notifier non configurato (mancano TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID/TELEGRAM_CHAT_IDS)")
 
     def send(self, message: str, parse_mode: str = "HTML") -> bool:
         """Invia messaggio Telegram"""
         if not self.enabled:
             return False
 
-        try:
-            url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-            response = requests.post(
-                url,
-                json={
-                    "chat_id": self.chat_id,
-                    "text": message,
-                    "parse_mode": parse_mode
-                },
-                timeout=10
-            )
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Errore invio Telegram: {e}")
-            return False
+        any_ok = False
+        for cid in self.chat_ids:
+            try:
+                url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+                response = requests.post(
+                    url,
+                    json={
+                        "chat_id": cid,
+                        "text": message,
+                        "parse_mode": parse_mode
+                    },
+                    timeout=10
+                )
+                response.raise_for_status()
+                any_ok = True
+            except Exception as e:
+                logger.error(f"❌ Errore invio Telegram a chat {cid}: {e}")
+        return any_ok
 
     def notify_trade_opened(
         self,

@@ -6,7 +6,7 @@ import os
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 from threading import Thread
 from dotenv import load_dotenv
 
@@ -31,10 +31,23 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 class TradingTelegramBot:
     """Bot Telegram interattivo per controllo Trading Agent"""
 
-    def __init__(self, token: str = None, chat_id: str = None):
+    def __init__(self, token: str = None, chat_id: str = None, chat_ids: Optional[List[str]] = None):
         self.token = token or TELEGRAM_BOT_TOKEN
-        self.chat_id = chat_id or TELEGRAM_CHAT_ID
-        self.enabled = bool(self.token and self.chat_id)
+
+        env_chat_ids = os.getenv("TELEGRAM_CHAT_IDS")
+        parsed_env = [c.strip() for c in env_chat_ids.split(",")] if env_chat_ids else []
+
+        if chat_ids:
+            self.chat_ids = chat_ids
+        elif parsed_env:
+            self.chat_ids = [c for c in parsed_env if c]
+        elif chat_id or TELEGRAM_CHAT_ID:
+            self.chat_ids = [chat_id or TELEGRAM_CHAT_ID]
+        else:
+            self.chat_ids = []
+
+        self.chat_id = self.chat_ids[0] if self.chat_ids else None  # backward compatibility
+        self.enabled = bool(self.token and self.chat_ids)
 
         # Trading Agent reference (set later via set_trading_agent)
         self.trading_agent: Optional[Any] = None
@@ -45,10 +58,10 @@ class TradingTelegramBot:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Notifier for push notifications (compatibility with existing system)
-        self.notifier = TelegramNotifier(token=self.token, chat_id=self.chat_id)
+        self.notifier = TelegramNotifier(token=self.token, chat_ids=self.chat_ids)
 
-        # Persisted message id for live log view
-        self.logs_message_id: Optional[int] = None
+        # Persisted message id for live log view per chat
+        self.logs_message_ids: Dict[int, int] = {}
 
         if not self.enabled:
             logger.warning("⚠️ Telegram bot non configurato (mancano TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID)")
@@ -66,7 +79,7 @@ class TradingTelegramBot:
             return False
 
         user_chat_id = str(update.effective_chat.id)
-        authorized = user_chat_id == self.chat_id
+        authorized = user_chat_id in self.chat_ids
 
         if not authorized:
             logger.warning(f"⚠️ Tentativo accesso non autorizzato da chat_id: {user_chat_id}")
@@ -162,21 +175,24 @@ class TradingTelegramBot:
             [[InlineKeyboardButton("🔄 Aggiorna", callback_data="refresh_logs")]]
         )
 
-        if self.logs_message_id:
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
+        if chat_id and chat_id in self.logs_message_ids:
             try:
                 await context.bot.edit_message_text(
-                    chat_id=self.chat_id,
-                    message_id=self.logs_message_id,
+                    chat_id=chat_id,
+                    message_id=self.logs_message_ids[chat_id],
                     text=text,
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
                 return
             except Exception as e:
-                logger.warning(f"⚠️ Impossibile aggiornare messaggio log esistente: {e}")
+                logger.warning(f"⚠️ Impossibile aggiornare messaggio log esistente (chat {chat_id}): {e}")
 
         sent = await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-        self.logs_message_id = sent.message_id
+        if chat_id:
+            self.logs_message_ids[chat_id] = sent.message_id
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler per comando /status"""
@@ -654,8 +670,9 @@ Il bot invierà notifiche per:
             )
             try:
                 await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
-                # Aggiorna l'id se non già salvato (es. prima chiamata da callback)
-                self.logs_message_id = query.message.message_id if query.message else self.logs_message_id
+                # Aggiorna l'id per questa chat
+                if query.message and query.message.chat_id:
+                    self.logs_message_ids[query.message.chat_id] = query.message.message_id
             except Exception as e:
                 logger.error(f"❌ Errore aggiornamento log: {e}")
 
