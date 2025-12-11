@@ -214,3 +214,7 @@ node_modules
 # Frontend build assets
 static/assets/
 static/index.html
+backend/static/*.html
+backend/static/assets/*.js
+backend/static/assets/*.css
+backup/trading_db_20251210_120738.sql 
