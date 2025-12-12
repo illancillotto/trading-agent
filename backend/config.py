@@ -10,8 +10,9 @@ from typing import Dict, Any
 # TIMEFRAME CONFIGURATION
 # ============================================================
 
-# Scalping mode DISABLED - too much noise on 5m timeframe
-SCALPING_MODE_ENABLED = False
+# Scalping mode DISABLED by default (NOF1.ai) - too much noise on 5m timeframe
+# Can be overridden with ALLOW_SCALPING=true in .env (not recommended)
+SCALPING_MODE_ENABLED = os.getenv("ALLOW_SCALPING", "false").lower() in ("true", "1", "yes")
 
 # Primary timeframe for analysis (was 5m in scalping mode)
 PRIMARY_TIMEFRAME = os.getenv("PRIMARY_TIMEFRAME", "15m")  # Options: "15m", "1h", "4h"

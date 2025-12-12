@@ -48,6 +48,15 @@ from trading_agent import previsione_trading_agent
 from sentiment import get_sentiment
 from forecaster import get_crypto_forecasts
 from hyperliquid_trader import HyperLiquidTrader
+
+# NOF1.ai Configuration
+try:
+    from config import SCALPING_MODE_ENABLED, PRIMARY_TIMEFRAME, SECONDARY_TIMEFRAME
+except ImportError:
+    # Fallback if config.py not available
+    SCALPING_MODE_ENABLED = False
+    PRIMARY_TIMEFRAME = "15m"
+    SECONDARY_TIMEFRAME = "4h"
 from risk_manager import RiskManager, RiskConfig
 from scheduler import TradingScheduler
 from whalealert import fetch_whale_alerts_from_api
@@ -119,7 +128,7 @@ CONFIG = {
     "ADX_THRESHOLD": 25,  # ADX threshold for strong trends
     "RSI_OVERBOUGHT": 70,  # RSI overbought level
     "RSI_OVERSOLD": 30,  # RSI oversold level
-    "ALLOW_SCALPING": os.getenv("ALLOW_SCALPING", "false").lower() in ("true", "1", "yes"),  # Scalping mode
+    "ALLOW_SCALPING": SCALPING_MODE_ENABLED,  # NOF1.ai: Scalping mode (from config.py, default: False)
     "ALLOW_SHORTS": os.getenv("ALLOW_SHORTS", "true").lower() in ("true", "1", "yes"),  # Allow SHORT positions (for debugging)
 
     # Regime Detection settings
@@ -276,7 +285,7 @@ class BotState:
                 logger.info("✅ Trend Confirmation Engine inizializzato")
                 logger.info(f"   ADX threshold: {CONFIG['ADX_THRESHOLD']}")
                 logger.info(f"   Min confidence: {CONFIG['MIN_TREND_CONFIDENCE']}")
-                logger.info(f"   Scalping mode: {'ENABLED' if CONFIG['ALLOW_SCALPING'] else 'DISABLED'}")
+                logger.info(f"   🎯 NOF1.ai Timeframe: {PRIMARY_TIMEFRAME}/{SECONDARY_TIMEFRAME} | Scalping: {'✅ ENABLED' if CONFIG['ALLOW_SCALPING'] else '❌ DISABLED'}")
 
             # Initialize Regime Detector (se abilitato)
             if CONFIG["REGIME_DETECTION_ENABLED"]:
