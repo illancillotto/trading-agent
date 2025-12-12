@@ -1,10 +1,21 @@
 import pandas as pd
 import ta
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+
+# Import config for timeframe settings (NOF1.ai)
+try:
+    from config import PRIMARY_TIMEFRAME, SECONDARY_TIMEFRAME, get_timeframe_config, SCALPING_MODE_ENABLED
+except ImportError:
+    # Fallback defaults if config not available
+    PRIMARY_TIMEFRAME = "15m"
+    SECONDARY_TIMEFRAME = "4h"
+    SCALPING_MODE_ENABLED = False
+    def get_timeframe_config(tf=None):
+        return {"enabled": True, "description": "Default"}
 
 
 INTERVAL_TO_MS = {
@@ -159,41 +170,55 @@ class CryptoTechnicalAnalysisHL:
     # ==============================
     #   ANALISI COMPLETA A 15m
     # ==============================
-    def get_complete_analysis(self, ticker: str) -> Dict:
+    def get_complete_analysis(self, ticker: str, timeframe: Optional[str] = None) -> Dict:
+        """
+        Complete technical analysis for a ticker (NOF1.ai configurable timeframe).
+
+        Args:
+            ticker: Ticker symbol
+            timeframe: Primary timeframe (default: from config)
+
+        Returns:
+            Dict with complete analysis
+        """
         coin = ticker.upper()
+        tf = timeframe or PRIMARY_TIMEFRAME
 
-        # 0) DATI 5 MINUTI (Short-term trigger)
+        # 0) DATI 5 MINUTI (Short-term trigger) - ONLY if scalping enabled
         short_term_data = None
-        try:
-            df_5m = self.fetch_ohlcv(coin, "5m", limit=50)
-            # Calcola indicatori veloci per lo sniping
-            df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
-            df_5m["rsi_14"] = self.calculate_rsi(df_5m["close"], 14)
-            
-            current_5m = df_5m.iloc[-1]
-            short_term_data = {
-                "price": current_5m["close"],
-                "ema_9": current_5m["ema_9"],
-                "rsi_14": current_5m["rsi_14"],
-                "volume": current_5m["volume"]
-            }
-        except Exception as e:
-            # Non blocchiamo tutto se fallisce il 5m
-            print(f"Warning: 5m data fetch failed for {ticker}: {e}")
+        if SCALPING_MODE_ENABLED:
+            try:
+                df_5m = self.fetch_ohlcv(coin, "5m", limit=50)
+                # Calcola indicatori veloci per lo sniping
+                df_5m["ema_9"] = self.calculate_ema(df_5m["close"], 9)
+                df_5m["rsi_14"] = self.calculate_rsi(df_5m["close"], 14)
 
-        # 1) DATI 15 MINUTI (intraday principale)
-        df_15m = self.fetch_ohlcv(coin, "15m", limit=200)
+                current_5m = df_5m.iloc[-1]
+                short_term_data = {
+                    "price": current_5m["close"],
+                    "ema_9": current_5m["ema_9"],
+                    "rsi_14": current_5m["rsi_14"],
+                    "volume": current_5m["volume"]
+                }
+            except Exception as e:
+                # Non blocchiamo tutto se fallisce il 5m
+                print(f"Warning: 5m data fetch failed for {ticker}: {e}")
+        else:
+            print(f"ℹ️  Scalping mode disabled, skipping 5m analysis")
 
-        df_15m["ema_20"] = self.calculate_ema(df_15m["close"], 20)
-        macd_line, signal_line, macd_diff = self.calculate_macd(df_15m["close"])
-        df_15m["macd"] = macd_diff
-        df_15m["rsi_7"] = self.calculate_rsi(df_15m["close"], 7)
-        df_15m["rsi_14"] = self.calculate_rsi(df_15m["close"], 14)
+        # 1) DATI PRIMARY TIMEFRAME (main intraday/swing)
+        df_primary = self.fetch_ohlcv(coin, tf, limit=200)
 
-        last_10_15m = df_15m.tail(10)
+        df_primary["ema_20"] = self.calculate_ema(df_primary["close"], 20)
+        macd_line, signal_line, macd_diff = self.calculate_macd(df_primary["close"])
+        df_primary["macd"] = macd_diff
+        df_primary["rsi_7"] = self.calculate_rsi(df_primary["close"], 7)
+        df_primary["rsi_14"] = self.calculate_rsi(df_primary["close"], 14)
 
-        # 2) CONTESTO "longer term" sempre a 15m ma su finestra più lunga
-        longer_term = df_15m.tail(50).copy()
+        last_10_primary = df_primary.tail(10)
+
+        # 2) CONTESTO "longer term" - same timeframe but longer window
+        longer_term = df_primary.tail(50).copy()
         longer_term["ema_20"] = self.calculate_ema(longer_term["close"], 20)
         longer_term["ema_50"] = self.calculate_ema(longer_term["close"], 50)
         longer_term["atr_3"] = self.calculate_atr(
@@ -219,7 +244,7 @@ class CryptoTechnicalAnalysisHL:
                 prev_day["high"], prev_day["low"], prev_day["close"]
             )
         else:
-            last = df_15m.iloc[-1]
+            last = df_primary.iloc[-1]
             pivot_points = self.calculate_pivot_points(
                 last["high"], last["low"], last["close"]
             )
@@ -227,19 +252,20 @@ class CryptoTechnicalAnalysisHL:
         oi_data = self.get_open_interest(coin)
         funding_rate = self.get_funding_rate(coin)
 
-        current_15m = df_15m.iloc[-1]
+        current_primary = df_primary.iloc[-1]
         current_longer = longer_term.iloc[-1]
 
         result = {
             "ticker": ticker,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "timeframe": tf,  # Add timeframe info (NOF1.ai)
             "short_term_5m": short_term_data,
-            
+
             "current": {
-                "price": current_15m["close"],
-                "ema20": current_15m["ema_20"],
-                "macd": current_15m["macd"],
-                "rsi_7": current_15m["rsi_7"],
+                "price": current_primary["close"],
+                "ema20": current_primary["ema_20"],
+                "macd": current_primary["macd"],
+                "rsi_7": current_primary["rsi_7"],
             },
             "volume": self.get_orderbook_volume(ticker),
             "pivot_points": pivot_points,
@@ -251,14 +277,14 @@ class CryptoTechnicalAnalysisHL:
             },
 
             "intraday": {
-                "mid_prices": last_10_15m["close"].tolist(),
-                "ema_20": last_10_15m["ema_20"].tolist(),
-                "macd": last_10_15m["macd"].tolist(),
-                "rsi_7": last_10_15m["rsi_7"].tolist(),
-                "rsi_14": last_10_15m["rsi_14"].tolist(),
+                "mid_prices": last_10_primary["close"].tolist(),
+                "ema_20": last_10_primary["ema_20"].tolist(),
+                "macd": last_10_primary["macd"].tolist(),
+                "rsi_7": last_10_primary["rsi_7"].tolist(),
+                "rsi_14": last_10_primary["rsi_14"].tolist(),
             },
 
-            "longer_term_15m": {
+            "longer_term": {
                 "ema_20_current": current_longer["ema_20"],
                 "ema_50_current": current_longer["ema_50"],
                 "atr_3_current": current_longer["atr_3"],
@@ -338,14 +364,39 @@ class CryptoTechnicalAnalysisHL:
         return output
 
 
-def analyze_multiple_tickers(tickers: List[str], testnet: bool = True) -> str:
+def analyze_multiple_tickers(
+    tickers: List[str],
+    testnet: bool = True,
+    timeframe: Optional[str] = None
+) -> Tuple[str, List[Dict]]:
+    """
+    Analyze multiple tickers with configurable timeframe (NOF1.ai).
+
+    Args:
+        tickers: List of ticker symbols
+        testnet: Whether to use testnet
+        timeframe: Timeframe override (default: PRIMARY_TIMEFRAME from config)
+
+    Returns:
+        Tuple of (formatted output, list of analysis dicts)
+    """
+    tf = timeframe or PRIMARY_TIMEFRAME
+    tf_config = get_timeframe_config(tf)
+
+    if not tf_config.get("enabled", False):
+        print(f"⚠️ Timeframe {tf} is disabled, falling back to {PRIMARY_TIMEFRAME}")
+        tf = PRIMARY_TIMEFRAME
+        tf_config = get_timeframe_config(tf)
+
+    print(f"📊 Analyzing {len(tickers)} tickers on {tf} timeframe ({tf_config.get('description', '')})")
+
     analyzer = CryptoTechnicalAnalysisHL(testnet=testnet)
     full_output = ""
     datas = []
     data = None
     for ticker in tickers:
         try:
-            data = analyzer.get_complete_analysis(ticker)
+            data = analyzer.get_complete_analysis(ticker, timeframe=tf)
             datas.append(data)
             full_output += analyzer.format_output(data)
         except Exception as e:

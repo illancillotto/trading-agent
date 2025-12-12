@@ -15,59 +15,70 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 TIMEOUT_SECONDS = 60
 
-# JSON Schema per structured output
+# JSON Schema per structured output (NOF1.ai Standards)
 TRADE_DECISION_SCHEMA = {
     "type": "object",
     "properties": {
         "operation": {
             "type": "string",
             "enum": ["open", "close", "hold"],
-            "description": "Tipo di operazione trading"
+            "description": "Trading action to take"
         },
         "symbol": {
             "type": "string",
-            "description": "Simbolo crypto su cui operare (es. BTC, ETH, SOL, AAVE)"
+            "description": "Cryptocurrency symbol (e.g., BTC, ETH, SOL)"
         },
         "direction": {
             "type": "string",
             "enum": ["long", "short"],
-            "description": "Direzione: long (prezzo sale) o short (prezzo scende)"
+            "description": "Trade direction"
         },
         "target_portion_of_balance": {
             "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Frazione del balance da usare (0.0-1.0)"
+            "minimum": 0.0,
+            "maximum": 0.30,
+            "description": "Portion of available balance to use (max 30%)"
         },
         "leverage": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 10,
-            "description": "Leva da 1x a 10x"
+            "maximum": 8,
+            "description": "Leverage multiplier (1-8x based on confidence)"
         },
         "stop_loss_pct": {
             "type": "number",
-            "minimum": 0.5,
-            "maximum": 10,
-            "description": "Stop-loss in percentuale dal prezzo di entry"
+            "minimum": 1.5,
+            "maximum": 5.0,
+            "description": "Stop loss percentage (1.5-5.0%)"
         },
         "take_profit_pct": {
             "type": "number",
-            "minimum": 1,
-            "maximum": 50,
-            "description": "Take-profit in percentuale dal prezzo di entry"
+            "minimum": 2.25,
+            "maximum": 50.0,
+            "description": "Take profit percentage (must be >= 1.5x stop_loss)"
+        },
+        "invalidation_condition": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 200,
+            "description": "Specific condition that invalidates the trade thesis"
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Confidence level in the trade (0.0-1.0)"
+        },
+        "risk_usd": {
+            "type": "number",
+            "minimum": 0.0,
+            "description": "Dollar amount at risk (calculated as: portion * balance * sl_pct * leverage)"
         },
         "reason": {
             "type": "string",
             "minLength": 10,
             "maxLength": 500,
-            "description": "Spiegazione della decisione"
-        },
-        "confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Livello di confidenza (0-1)"
+            "description": "Detailed explanation of the decision"
         }
     },
     "required": [
@@ -78,8 +89,10 @@ TRADE_DECISION_SCHEMA = {
         "leverage",
         "stop_loss_pct",
         "take_profit_pct",
-        "reason",
-        "confidence"
+        "invalidation_condition",
+        "confidence",
+        "risk_usd",
+        "reason"
     ],
     "additionalProperties": False
 }
@@ -165,23 +178,28 @@ def previsione_trading_agent(
   "operation": "open|close|hold",
   "symbol": "COIN_SYMBOL",
   "direction": "long|short",
-  "target_portion_of_balance": 0.1,
+  "target_portion_of_balance": 0.15,
   "leverage": 3,
-  "stop_loss_pct": 2.0,
+  "stop_loss_pct": 2.5,
   "take_profit_pct": 5.0,
-  "reason": "Detailed explanation of the decision",
-  "confidence": 0.7
+  "invalidation_condition": "Specific, observable condition that voids this trade thesis",
+  "confidence": 0.65,
+  "risk_usd": 25.0,
+  "reason": "Detailed explanation of the decision"
 }
 
-IMPORTANT: 
+IMPORTANT:
 - operation must be one of: "open", "close", "hold"
-- symbol must be the ticker of the analyzed coin (e.g. "BTC", "ETH", "SOL", "AAVE")
+- symbol must be the ticker of the analyzed coin (e.g. "BTC", "ETH", "SOL")
 - direction must be "long" or "short"
-- target_portion_of_balance: number between 0.0 and 1.0
-- leverage: integer between 1 and 10
-- stop_loss_pct: number between 0.5 and 10
-- take_profit_pct: number between 1 and 50
+- target_portion_of_balance: number between 0.0 and 0.30 (max 30%)
+- leverage: integer between 1 and 8 (based on confidence)
+- stop_loss_pct: number between 1.5 and 5.0
+- take_profit_pct: number between 2.25 and 50.0 (must be >= 1.5x stop_loss_pct)
+- invalidation_condition: string (10-200 chars), specific condition that proves you were wrong
 - confidence: number between 0.0 and 1.0
+- risk_usd: calculated dollar risk (portion × balance × sl_pct × leverage)
+- reason: string (10-500 chars), detailed explanation
 - Respond ONLY with the JSON, without additional text."""
 
             # Prepara i parametri della richiesta
@@ -294,7 +312,7 @@ IMPORTANT:
 
     # Tutti i tentativi falliti - ritorna decisione di sicurezza
     logger.error(f"❌ Tutti i {max_retries} tentativi falliti. Ultimo errore: {last_error}")
-    logger.warning("⚠️ Usando fallback HOLD neutrale (direction rimossa per neutralità)")
+    logger.warning("⚠️ Usando fallback HOLD neutrale")
 
     return {
         "operation": "hold",
@@ -304,8 +322,10 @@ IMPORTANT:
         "leverage": 1,
         "stop_loss_pct": 2.0,
         "take_profit_pct": 4.0,
-        "reason": f"Fallback a HOLD per errore API: {str(last_error)[:100]}",
+        "invalidation_condition": "N/A - Fallback decision due to API error",
         "confidence": 0.0,
+        "risk_usd": 0.0,
+        "reason": f"Fallback a HOLD per errore API: {str(last_error)[:100]}",
         "_fallback": True  # Flag to indicate this is a fallback response
     }
 
@@ -339,6 +359,94 @@ def _validate_decision(decision: Dict[str, Any]) -> None:
 
     if effective_exposure > 0.5:
         logger.warning(f"⚠️ Esposizione elevata: {effective_exposure:.1%} (portion={portion:.1%}, leva={leverage}x)")
+
+
+def validate_trade_decision(decision: Dict, account_balance: float) -> tuple[bool, str]:
+    """
+    Validate trade decision against NOF1.ai rules.
+
+    Args:
+        decision: Trade decision dict
+        account_balance: Current account balance in USD
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    from typing import Tuple
+    errors = []
+
+    # Check R:R ratio (minimum 1.5:1)
+    sl = decision.get('stop_loss_pct', 0)
+    tp = decision.get('take_profit_pct', 0)
+    if sl > 0 and tp < (sl * 1.5):
+        rr = tp / sl if sl > 0 else 0
+        errors.append(f"R:R ratio too low: {rr:.2f}x (min 1.5x required)")
+
+    # Check invalidation condition
+    inv_cond = decision.get('invalidation_condition', '')
+    if not inv_cond or len(inv_cond) < 10:
+        errors.append("Missing or too short invalidation_condition (min 10 chars)")
+
+    # Check confidence threshold for opening positions
+    if decision.get('operation') == 'open':
+        conf = decision.get('confidence', 0)
+        if conf < 0.5:
+            errors.append(f"Confidence too low to open: {conf:.2f} (min 0.5 required)")
+
+    # Check risk_usd doesn't exceed 3% of account
+    risk_usd = decision.get('risk_usd', 0)
+    max_risk = account_balance * 0.03  # 3% max risk
+    if risk_usd > max_risk:
+        errors.append(f"Risk ${risk_usd:.2f} exceeds 3% of account (max ${max_risk:.2f})")
+
+    # Check leverage based on confidence
+    leverage = decision.get('leverage', 1)
+    confidence = decision.get('confidence', 0)
+    max_lev_for_conf = _get_max_leverage_for_confidence(confidence)
+    if leverage > max_lev_for_conf:
+        errors.append(
+            f"Leverage {leverage}x too high for confidence {confidence:.2f} "
+            f"(max {max_lev_for_conf}x for this confidence level)"
+        )
+
+    # Check target_portion_of_balance
+    portion = decision.get('target_portion_of_balance', 0)
+    if portion > 0.30:
+        errors.append(f"Position size {portion:.1%} exceeds 30% maximum")
+
+    # Verify risk_usd calculation matches expected
+    expected_risk = portion * account_balance * (sl / 100) * leverage
+    if risk_usd > 0 and abs(risk_usd - expected_risk) / max(risk_usd, expected_risk, 1) > 0.1:  # 10% tolerance
+        logger.warning(
+            f"⚠️ risk_usd mismatch: provided={risk_usd:.2f}, "
+            f"expected={expected_risk:.2f}"
+        )
+
+    if errors:
+        return False, "; ".join(errors)
+    return True, ""
+
+
+def _get_max_leverage_for_confidence(confidence: float) -> int:
+    """
+    Get maximum allowed leverage based on confidence level (NOF1.ai standards).
+
+    Args:
+        confidence: Confidence level (0.0-1.0)
+
+    Returns:
+        Maximum leverage allowed
+    """
+    if confidence < 0.50:
+        return 1  # Should not open, but if forced, minimum leverage
+    elif confidence < 0.60:
+        return 2  # Low conviction
+    elif confidence < 0.70:
+        return 4  # Moderate conviction
+    elif confidence < 0.85:
+        return 6  # High conviction
+    else:
+        return 8  # Very high conviction
 
 
 # Funzione di test

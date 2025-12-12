@@ -71,6 +71,7 @@ from confidence_calibrator import (
 
 # Notifiche Telegram
 from notifications import notifier
+from performance_metrics import get_performance_calculator
 
 # ============================================================
 #                      CONFIGURAZIONE
@@ -857,13 +858,30 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
 Consecutive Losses: {risk_manager.consecutive_losses}
 </risk_status>
 """
+            # Calculate performance metrics (NOF1.ai)
+            try:
+                perf_calculator = get_performance_calculator(db_utils)
+                perf_metrics = perf_calculator.get_metrics_from_db(lookback_days=30)
+                performance_section = perf_metrics.to_prompt_string() if perf_metrics.total_trades > 0 else """**Your Performance Metrics:**
+- No completed trades yet. Focus on quality over quantity.
+- Start with conservative position sizes until you build a track record."""
+            except Exception as e:
+                logger.warning(f"⚠️ Error calculating performance metrics: {e}")
+                performance_section = "**Your Performance Metrics:** (unavailable - system starting)"
+
             # Load system prompt template
             with open('system_prompt.txt', 'r') as f:
                 system_prompt_template = f.read()
-            
+
+            # Replace performance metrics placeholder
+            system_prompt_with_perf = system_prompt_template.replace(
+                "{performance_metrics}",
+                performance_section
+            )
+
             # Format prompt
-            final_prompt_manage = system_prompt_template.format(
-                json.dumps(account_status, indent=2), 
+            final_prompt_manage = system_prompt_with_perf.format(
+                json.dumps(account_status, indent=2),
                 msg_info_manage
             )
             
@@ -1140,11 +1158,20 @@ Consecutive Losses: {risk_manager.consecutive_losses}
     Daily P&L: ${risk_manager.daily_pnl:.2f}
     </risk_status>
     """
+                    # Calculate performance metrics (NOF1.ai) - reuse from earlier
+                    # (performance_section already calculated above)
+
                     # Load and format prompt
                     with open('system_prompt.txt', 'r') as f:
                         system_prompt_template = f.read()
-    
-                    final_prompt_scout = system_prompt_template.format(
+
+                    # Replace performance metrics placeholder
+                    system_prompt_with_perf_scout = system_prompt_template.replace(
+                        "{performance_metrics}",
+                        performance_section  # Already calculated earlier
+                    )
+
+                    final_prompt_scout = system_prompt_with_perf_scout.format(
                         json.dumps(account_status, indent=2),
                         msg_info_scout
                     )

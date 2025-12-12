@@ -392,6 +392,158 @@ backend/market_data/
 - **Extensible**: Facile aggiungere nuovi provider o metriche
 - **LLM-Optimized**: Output formattato per AI reasoning
 
+## 🎯 NOF1.ai Trading Framework
+
+Il sistema implementa i principi NOF1.ai per trading disciplinato e risk-aware, con focus su **quality over quantity** e **capital preservation**.
+
+### Core Principles
+
+1. **Risk First, Profit Second** - Mai rischiare più del tollerabile
+2. **Invalidation Conditions** - Ogni trade ha un punto "I was wrong" ben definito
+3. **R:R Ratio >= 1.5** - Profit potenziale sempre >= 1.5x loss potenziale
+4. **Confidence-Based Sizing** - Position size proporzionale alla confidenza
+5. **Performance-Driven** - Sharpe Ratio guida le decisioni di risk
+
+### 📊 Performance Metrics Integration
+
+Il sistema calcola e integra automaticamente le tue performance metriche nel decision-making:
+
+```python
+# Metriche calcolate automaticamente ogni ciclo
+- Sharpe Ratio (annualizzato)
+- Win Rate e Average Win/Loss
+- Maximum Drawdown
+- Consecutive Losses
+- Total Return
+```
+
+**Interpretazione Sharpe Ratio:**
+- `< 0`: ⚠️ LOSING - riduci size, rivedi strategia
+- `0-1`: ⚡ VOLATILE - mantieni disciplina, solo setup A+
+- `1-2`: ✅ GOOD - strategia funziona, continua così
+- `> 2`: 🌟 EXCELLENT - performance eccellente (non diventare overconfident)
+
+### 🔒 Trade Decision Validation
+
+Ogni decisione AI viene validata contro regole NOF1.ai:
+
+**Criteri per OPEN:**
+- ✅ Confidence >= 0.50
+- ✅ R:R ratio >= 1.5 (idealmente 2.0+)
+- ✅ Risk_usd <= 3% account
+- ✅ Leverage appropriato per confidence
+- ✅ Invalidation condition specifica
+- ✅ Position size <= 30% balance
+- ✅ Almeno 2-3 indicatori concordi
+
+**Leverage Limits (Confidence-Based):**
+```
+0.00-0.49: Don't trade (HOLD)
+0.50-0.59: Max 2x leverage (low conviction)
+0.60-0.69: Max 4x leverage (moderate conviction)
+0.70-0.84: Max 6x leverage (high conviction)
+0.85-1.00: Max 8x leverage (very high conviction)
+```
+
+### ⏱️ Timeframe Configuration
+
+**Scalping Mode DISABILITATO** - Il trading su 5m è risultato troppo rumoroso.
+
+**Timeframe Configurabili:**
+- **15m** (default) - Intraday trading, ciclo ogni 15-30 min
+- **1h** - Swing trading, ciclo ogni 30-60 min
+- **4h** - Position trading, ciclo ogni 60+ min
+
+```bash
+# Configura in .env
+PRIMARY_TIMEFRAME=15m
+SECONDARY_TIMEFRAME=4h
+CYCLE_INTERVAL_MINUTES=30
+```
+
+### 📐 Decision Schema
+
+Ogni decisione AI include campi NOF1.ai:
+
+```json
+{
+  "operation": "open|close|hold",
+  "symbol": "BTC",
+  "direction": "long|short",
+  "target_portion_of_balance": 0.15,
+  "leverage": 3,
+  "stop_loss_pct": 2.5,
+  "take_profit_pct": 5.0,
+  "invalidation_condition": "BTC breaks below $95,000 4h support",
+  "confidence": 0.65,
+  "risk_usd": 25.0,
+  "reason": "Strong bullish momentum with MACD crossover"
+}
+```
+
+### 🧪 Testing
+
+Esegui i test NOF1.ai:
+
+```bash
+cd backend
+python -m pytest tests/test_nof1_integration.py -v
+```
+
+**Test Coverage:**
+- ✅ Trade decision validation
+- ✅ R:R ratio enforcement
+- ✅ Leverage-confidence mapping
+- ✅ Sharpe Ratio calculation
+- ✅ Risk limits (3% max)
+- ✅ Schema compliance
+
+### ⚙️ Configurazione Avanzata
+
+**Risk Management (`.env`):**
+```bash
+MAX_RISK_PER_TRADE_PCT=3.0        # Max 3% risk per trade
+MIN_RR_RATIO=1.5                   # Min R:R ratio
+MAX_LEVERAGE=8                     # Max leverage cap
+MAX_POSITION_SIZE_PCT=30.0         # Max 30% per position
+```
+
+**Performance Tracking:**
+```bash
+SHARPE_LOOKBACK_DAYS=30            # Lookback per Sharpe
+RISK_FREE_RATE_ANNUAL=0.05         # 5% annual
+MIN_SHARPE_FOR_NORMAL_TRADING=-0.5 # Stop se < -0.5
+```
+
+### 🔍 System Monitoring
+
+Nuovi endpoint per monitorare performance:
+
+```bash
+# Performance metrics
+GET /api/system/performance-metrics
+
+# Validation stats
+GET /api/system/validation-stats
+
+# Recent decisions
+GET /api/bot-operations?limit=20
+```
+
+### 💡 Best Practices
+
+1. **Inizia Conservativo** - Prime settimane: confidence bassa, small positions
+2. **Monitora Sharpe** - Se < 0 per >1 settimana, rivedi strategia
+3. **Rispetta Invalidation** - Se triggered, chiudi SUBITO (no speranza)
+4. **Quality > Quantity** - 1 trade A+ > 5 trade B
+5. **Track Consecutive Losses** - Se >= 3, pausa e analisi
+
+### 📚 Riferimenti
+
+- **Sharpe Ratio**: [Investopedia](https://www.investopedia.com/terms/s/sharperatio.asp)
+- **R:R Ratio**: Risk-Reward ratio, foundation of position sizing
+- **Invalidation**: Concept from Mark Minervini / Stan Weinstein
+
 ## Video di presentazione
 
 Guarda la presentazione del progetto su YouTube:  

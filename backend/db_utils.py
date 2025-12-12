@@ -1131,6 +1131,78 @@ def get_trade_statistics(
             return dict(zip(columns, row)) if row else {}
 
 
+def get_closed_trades(lookback_days: int = 30) -> List[Dict]:
+    """
+    Fetch closed trades from the last N days.
+
+    Args:
+        lookback_days: Number of days to look back
+
+    Returns:
+        List of dicts with: symbol, direction, entry_price, exit_price,
+        pnl_usd, pnl_pct, closed_at, exit_reason
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    symbol, direction, entry_price, exit_price,
+                    pnl_usd, pnl_pct, closed_at, exit_reason
+                FROM executed_trades
+                WHERE status = 'closed'
+                AND closed_at >= NOW() - INTERVAL '%s days'
+                ORDER BY closed_at DESC
+                """ % lookback_days
+            )
+            rows = cur.fetchall()
+
+    return [
+        {
+            'symbol': r[0],
+            'direction': r[1],
+            'entry_price': float(r[2]) if r[2] else 0,
+            'exit_price': float(r[3]) if r[3] else 0,
+            'pnl_usd': float(r[4]) if r[4] else 0,
+            'pnl_pct': float(r[5]) if r[5] else 0,
+            'closed_at': r[6],
+            'exit_reason': r[7]
+        }
+        for r in rows
+    ]
+
+
+def get_account_snapshots(lookback_days: int = 30) -> List[Dict]:
+    """
+    Fetch account balance snapshots from the last N days.
+
+    Args:
+        lookback_days: Number of days to look back
+
+    Returns:
+        List of dicts with: balance_usd, timestamp
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT balance_usd, created_at
+                FROM account_snapshots
+                WHERE created_at >= NOW() - INTERVAL '%s days'
+                ORDER BY created_at ASC
+                """ % lookback_days
+            )
+            rows = cur.fetchall()
+
+    return [
+        {
+            'balance_usd': float(r[0]) if r[0] else 0,
+            'timestamp': r[1]
+        }
+        for r in rows
+    ]
+
+
 if __name__ == "__main__":
     init_db()
 
