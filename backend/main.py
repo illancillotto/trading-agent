@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
+import io
+import pandas as pd
 
 from model_manager import get_model_manager
 from db_utils import get_connection
@@ -13,6 +15,8 @@ from token_tracker import get_token_tracker
 from notifications import notifier
 from backtrack_analysis import BacktrackAnalyzer
 from confidence_calibrator import get_confidence_calibrator
+from data_export import DataExporter
+from trade_view_generator import TradeViewGenerator
 import threading
 import logging
 
@@ -1549,6 +1553,211 @@ async def evaluate_decision(decision: Dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =====================
+# Data Export & Analytics API Endpoints
+# =====================
+
+@app.get("/api/export/full")
+async def export_full_dataset(
+    days: Optional[int] = Query(None, description="Number of days to export"),
+    period: Optional[str] = Query(None, description="Preset period: 12h, 24h, 3d, 7d, 30d, 90d, 365d"),
+    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
+    include_context: bool = Query(True, description="Include AI context (indicators, news, etc.)"),
+    include_metrics: bool = Query(True, description="Include analytics metrics"),
+    format: str = Query('json', description="Export format: json or csv")
+):
+    """
+    Export complete dataset con filtri temporali
+
+    Preset periods:
+    - 12h: Last 12 hours
+    - 24h: Last 24 hours
+    - 3d: Last 3 days
+    - 7d: Last 7 days (1 week)
+    - 30d: Last 30 days (1 month)
+    - 90d: Last 90 days (3 months)
+    - 365d: Last 365 days (1 year)
+
+    Example: /api/export/full?period=7d&include_metrics=true
+    """
+    try:
+        data = DataExporter.export_full_dataset(
+            days=days,
+            period_preset=period,
+            start_date=start_date,
+            end_date=end_date,
+            include_context=include_context,
+            include_metrics=include_metrics,
+            format=format
+        )
+
+        if format == 'csv':
+            csv_string = DataExporter.export_to_csv_string(data)
+            return StreamingResponse(
+                io.StringIO(csv_string),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=trading_data_{period or days}d.csv"}
+            )
+        else:
+            return data
+
+    except Exception as e:
+        logger.error(f"Export error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.get("/api/export/backtest")
+async def export_backtest_format(
+    days: int = Query(30, description="Number of days to export")
+):
+    """
+    Export in formato ottimizzato per backtesting
+
+    Returns:
+    - decisions: AI decisions con contesto completo
+    - actual_trades: Trade effettivamente eseguiti
+    - correlation: Match tra decisioni e trade
+
+    Example: /api/export/backtest?days=30
+    """
+    try:
+        data = DataExporter.export_backtest_format(days=days)
+        return data
+    except Exception as e:
+        logger.error(f"Backtest export error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Backtest export failed: {str(e)}")
+
+
+@app.get("/api/analytics/performance")
+async def get_performance_analytics(
+    days: int = Query(30, description="Number of days to analyze"),
+    symbol: Optional[str] = Query(None, description="Filter by symbol (e.g., BTC)")
+):
+    """
+    Calcola metriche di performance avanzate
+
+    Returns:
+    - Performance metrics (Sharpe, Sortino, Max DD, etc.)
+    - Equity curve
+    - Breakdown per simbolo
+    - Breakdown per periodo
+
+    Example: /api/analytics/performance?days=30&symbol=BTC
+    """
+    try:
+        # Recupera trade
+        trades = DataExporter._get_trades_data(days)
+
+        if not trades:
+            raise HTTPException(status_code=404, detail="No trades found for the specified period")
+
+        # Filtra per simbolo se richiesto
+        if symbol:
+            trades = [t for t in trades if t['symbol'] == symbol]
+            if not trades:
+                raise HTTPException(status_code=404, detail=f"No trades found for {symbol}")
+
+        # Calcola analytics
+        trades_df = pd.DataFrame(trades)
+        from analytics import TradingAnalytics
+        analytics = TradingAnalytics(trades_df)
+
+        metrics = analytics.calculate_all_metrics()
+        equity_curve = analytics.generate_equity_curve()
+        breakdown_symbol = analytics.breakdown_by_symbol()
+        breakdown_daily = analytics.breakdown_by_timeframe('daily')
+
+        return {
+            'period_days': days,
+            'symbol_filter': symbol,
+            'metrics': metrics.to_dict(),
+            'equity_curve': equity_curve,
+            'breakdown_by_symbol': breakdown_symbol,
+            'breakdown_by_day': breakdown_daily
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analytics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analytics calculation failed: {str(e)}")
+
+
+@app.get("/api/export/presets")
+async def get_export_presets():
+    """
+    Restituisce lista preset periodi disponibili
+    """
+    return {
+        'presets': [
+            {'key': '12h', 'days': 0.5, 'label': 'Last 12 hours'},
+            {'key': '24h', 'days': 1, 'label': 'Last 24 hours'},
+            {'key': '3d', 'days': 3, 'label': 'Last 3 days'},
+            {'key': '7d', 'days': 7, 'label': 'Last 7 days (1 week)'},
+            {'key': '30d', 'days': 30, 'label': 'Last 30 days (1 month)'},
+            {'key': '90d', 'days': 90, 'label': 'Last 90 days (3 months)'},
+            {'key': '365d', 'days': 365, 'label': 'Last 365 days (1 year)'}
+        ]
+    }
+
+
+# =====================
+# Trade View Endpoints for Telegram Instant View
+# =====================
+
+@app.get("/trade-view/{trade_id}", response_class=HTMLResponse)
+async def get_trade_view(trade_id: int):
+    """
+    Genera pagina HTML ottimizzata per Telegram Instant View
+
+    Args:
+        trade_id: ID del trade da visualizzare
+
+    Returns:
+        HTML page ottimizzato per Instant View
+    """
+    try:
+        # Determina base URL (usa variabile ambiente o default)
+        base_url = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+
+        # Genera HTML
+        html = TradeViewGenerator.generate_trade_view_html(trade_id, base_url)
+
+        if not html:
+            raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+
+        return html
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating trade view: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate trade view: {str(e)}")
+
+
+@app.get("/trade-view-test/{trade_id}")
+async def test_trade_view(trade_id: int):
+    """
+    Test endpoint per verificare struttura dati (ritorna JSON anziché HTML)
+    Utile per debugging
+    """
+    try:
+        trade = TradeViewGenerator._get_trade_data(trade_id)
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+
+        ai_context = TradeViewGenerator._get_ai_context(trade.get('bot_operation_id'))
+
+        return {
+            "trade": trade,
+            "ai_context": ai_context,
+            "instant_view_url": f"/trade-view/{trade_id}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Mount static files for frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
@@ -1687,7 +1896,8 @@ async def serve_root():
 async def serve_spa(full_path: str):
     """Serve the frontend index.html for SPA routes that don't match API/static"""
     # Skip API and static routes
-    if full_path.startswith("api") or full_path.startswith("static") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+    if (full_path.startswith("api") or full_path.startswith("static") or full_path.startswith("docs") or
+        full_path.startswith("openapi.json") or full_path.startswith("trade-view")):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Not found")
 

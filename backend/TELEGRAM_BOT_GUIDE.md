@@ -9,8 +9,9 @@ Bot Telegram interattivo per monitorare e controllare il Trading Agent da remoto
 3. [Comandi Disponibili](#comandi-disponibili)
 4. [Integrazione](#integrazione)
 5. [Notifiche Automatiche](#notifiche-automatiche)
-6. [Sicurezza](#sicurezza)
-7. [Troubleshooting](#troubleshooting)
+6. [Telegram Instant View](#telegram-instant-view)
+7. [Sicurezza](#sicurezza)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -309,6 +310,102 @@ PnL: 🟢 $125.50
 Messaggio: Connessione API persa
 Contesto: fetch_market_data
 ```
+
+---
+
+## 📱 Telegram Instant View
+
+### Cosa è Instant View?
+
+Telegram Instant View permette di visualizzare contenuti web **direttamente in Telegram** senza aprire browser esterni. È una funzionalità nativa di Telegram che rende le pagine web veloci, belle e ottimizzate per dispositivi mobili.
+
+### 🆕 Trade Details in Instant View
+
+Quando ricevi una notifica trade dal bot, clicca su **"📊 View Full Details"** per aprire un'analisi completa del trade direttamente in Telegram:
+
+#### 📊 Cosa Vedrai
+- **📈 P&L Metrics**: Colori dinamici (verde per profit, rosso per loss)
+- **📊 Trade Details**: Entry/exit prices, leverage, stop loss, take profit, fees
+- **🤖 AI Context**: Confidence level con barra visuale, reasoning dell'AI, condizioni di invalidazione
+- **💹 Market Indicators**: EMA 20/50, ATR 14, RSI, prezzo al momento della decisione
+- **😊 Market Sentiment**: Fear & Greed Index e sentiment classification
+- **📰 Relevant News**: Notizie rilevanti troncate intelligentemente
+- **🔮 Price Forecasts**: Previsioni prezzo con expected change percentage
+
+#### 🎨 Design Features
+- **Mobile-First**: Ottimizzato per dispositivi mobili
+- **Color-Coded**: Verde/rosso basato sulla direzione del trade
+- **Responsive**: Si adatta automaticamente alla dimensione dello schermo
+- **Fast Loading**: Nessun JavaScript, solo HTML/CSS ottimizzato
+
+### ⚙️ Setup Instant View
+
+#### 1. Deploy Backend Pubblico
+```bash
+# Deploy su Railway, VPS o altro provider
+# Deve avere HTTPS obbligatorio per Instant View
+PUBLIC_BASE_URL=https://your-domain.com
+```
+
+#### 2. Crea Template su Telegram
+1. Vai su https://instantview.telegram.org/
+2. Login con il tuo account Telegram
+3. Clicca "My Templates" → "Create new template"
+4. Inserisci URL base: `https://your-domain.com/trade-view/`
+5. Incolla il template XPath fornito in `TELEGRAM_INSTANT_VIEW_SETUP.md`
+6. Clicca "Check" per validare
+7. Test con URL reale: `https://your-domain.com/trade-view/1`
+8. Submit per approvazione (24-48h)
+
+#### 3. Configurazione Environment
+```env
+# In backend/.env
+PUBLIC_BASE_URL=https://your-domain.com
+```
+
+#### 4. Test
+```bash
+# Test endpoint HTML
+curl https://your-domain.com/trade-view/1
+
+# Test endpoint JSON (debug)
+curl https://your-domain.com/trade-view-test/1
+```
+
+### 🔧 Template XPath
+
+Il template Instant View è già pronto in `TELEGRAM_INSTANT_VIEW_SETUP.md`. Include:
+- Estrazione automatica del titolo e sottotitolo
+- Parsing delle metriche cards
+- Supporto per tabelle e liste
+- Rimozione elementi non necessari (style, script)
+- Formattazione links e testo
+
+### 🧪 Troubleshooting Instant View
+
+#### Link non apre Instant View
+- **Causa**: Template non ancora approvato
+- **Soluzione**: Attendi 24-48h dopo submission
+
+#### 404 Error
+- **Causa**: Trade ID non esiste o backend offline
+- **Soluzione**: Verifica database e logs backend
+
+#### HTML non ottimizzato
+- **Causa**: Template XPath non corretto
+- **Soluzione**: Usa il template fornito, testa con checker integrato
+
+#### HTTPS richiesto
+- **Causa**: URL non HTTPS
+- **Soluzione**: Deploy su dominio con SSL valido
+
+### 📈 Vantaggi Instant View
+
+1. **🚀 Velocità**: Pagine caricano istantaneamente
+2. **📱 UX**: Nativa Telegram, ottimizzata mobile
+3. **🔒 Sicurezza**: Nessun rischio phishing esterno
+4. **📊 Analisi**: Dettagli completi senza lasciare app
+5. **💰 Risparmio**: Meno dati, meno batteria
 
 ---
 

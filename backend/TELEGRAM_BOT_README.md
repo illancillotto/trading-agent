@@ -64,10 +64,29 @@ bot.start_polling()
 ## 📊 Notifiche Automatiche
 
 Il bot invia notifiche push per:
-- ✅ Apertura/chiusura trades
+- ✅ **Trade Aperti**: Entry price, size, leverage + link Instant View
+- ✅ **Trade Chiusi**: P&L, exit reason + link analisi completa
 - 🚨 Circuit breaker attivato
 - ❌ Errori critici
 - 📊 Riepilogo giornaliero
+
+### 🆕 Telegram Instant View
+
+**Clicca "📊 View Full Details"** nelle notifiche per aprire analisi dettagliate direttamente in Telegram:
+
+- **📈 P&L Metrics**: Colori dinamici con percentuali
+- **📊 Trade Details**: Entry/exit, leverage, SL/TP, fees
+- **🤖 AI Context**: Confidence level, reasoning, indicatori
+- **💹 Market Data**: Sentiment, news, price forecasts
+- **📱 Mobile Ready**: Design ottimizzato per dispositivi mobili
+
+**Setup Instant View**:
+1. Deploy backend su dominio pubblico HTTPS
+2. Crea template su https://instantview.telegram.org/
+3. Configura `PUBLIC_BASE_URL=https://your-domain.com`
+4. Attendi approvazione (24-48h)
+
+Vedi [`TELEGRAM_INSTANT_VIEW_SETUP.md`](../TELEGRAM_INSTANT_VIEW_SETUP.md) per guida completa.
 
 ## 🔒 Sicurezza
 

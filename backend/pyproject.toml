@@ -28,6 +28,7 @@ dependencies = [
     #"torch",
     "scikit-learn",
     "PyYAML",
+    "jinja2>=3.1.0",
 ]
 
 [tool.uv]

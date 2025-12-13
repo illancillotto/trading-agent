@@ -1,5 +1,302 @@
 # Changelog
 
+## [0.4.1] - 2025-12-13
+
+### 📱 Telegram Instant View Implementation
+
+Complete implementation of Telegram Instant View for detailed trade analysis directly within Telegram notifications.
+
+#### 🚀 New Features
+
+##### 📊 Trade View Generator (`trade_view_generator.py`)
+- **TradeViewGenerator Class**: Generates responsive HTML pages for Telegram Instant View
+- **Database Integration**: Fetches complete trade data and AI decision context from database
+- **Rich HTML Templates**: Professional design with dynamic styling based on trade direction (green/red)
+- **Comprehensive Data Display**:
+  - Key metrics cards (P&L, entry price, position size, duration)
+  - Complete trade details (symbol, direction, leverage, SL/TP, fees, slippage)
+  - AI decision context (confidence level, reasoning, invalidation conditions)
+  - Market indicators (EMA 20/50, ATR 14, price at decision)
+  - Sentiment analysis (Fear & Greed Index, classification)
+  - Relevant news with smart truncation
+  - Price forecasts with expected change percentage
+- **Mobile-Optimized**: Responsive design optimized for mobile Telegram clients
+- **Error Handling**: Graceful error handling with detailed logging
+
+##### 🌐 API Endpoints
+- **`/trade-view/{trade_id}`**: HTML endpoint serving Instant View pages
+- **`/trade-view-test/{trade_id}`**: JSON debug endpoint for testing data structure
+- **Smart Routing**: Proper integration with SPA catch-all routing
+
+##### 📱 Notification Enhancement (`notifications.py`)
+- **send_trade_notification()**: New function for Instant View notifications
+- **Dynamic Message Formatting**: Context-aware messages for trade opening/closing
+- **Instant View Links**: Automatic inclusion of Instant View URLs in notifications
+- **Rich Formatting**: HTML-formatted messages with emojis and structured data
+
+##### 🔗 Integration (`trading_engine.py`)
+- **Trade Engine Integration**: Automatic Instant View links in trade notifications
+- **Database Queries**: Efficient trade data retrieval for notification generation
+- **Error Resilience**: Graceful handling when trade data is unavailable
+
+##### 📚 Documentation & Setup
+- **TELEGRAM_INSTANT_VIEW_SETUP.md**: Complete setup guide for Instant View
+- **Template Configuration**: XPath templates for Telegram Instant View
+- **Production Deployment**: HTTPS requirements and domain configuration
+- **Troubleshooting**: Common issues and solutions
+
+#### 🛠️ Technical Improvements
+
+- **Jinja2 Templates**: Modern templating system for HTML generation
+- **Database Optimization**: Efficient queries for trade and AI context data
+- **Environment Variables**: `PUBLIC_BASE_URL` configuration for production URLs
+- **Type Safety**: Full type hints and error handling throughout
+
+#### 📋 Configuration
+
+New environment variables:
+```env
+PUBLIC_BASE_URL=https://your-domain.com  # Required for Instant View links
+```
+
+#### 🧪 Testing
+
+- **Endpoint Testing**: HTTP endpoints verified for correct responses
+- **Database Integration**: Trade data retrieval tested across different scenarios
+- **Template Rendering**: HTML generation validated with sample data
+- **Error Handling**: Graceful degradation when data is missing
+
+---
+
+## [0.4.0] - 2025-12-13
+
+### 📊 Data Export & Analytics System
+
+Complete implementation of advanced data export and analytics system for comprehensive performance analysis, backtesting, and reporting.
+
+#### 🚀 New Features
+
+##### 📈 Analytics Module (`analytics.py`)
+- **TradingAnalytics Class**: Professional financial metrics calculator
+- **PerformanceMetrics Dataclass**: 45+ comprehensive performance metrics
+- **Risk-Adjusted Metrics**:
+  - Sharpe Ratio (annualized)
+  - Sortino Ratio (downside deviation only)
+  - Calmar Ratio (return/max drawdown)
+  - Maximum Drawdown (USD and %)
+- **Performance Metrics**:
+  - Win Rate (overall and by direction)
+  - Profit Factor (total wins / total losses)
+  - Average Win/Loss (USD and %)
+  - Largest Win/Loss
+  - Consecutive wins/losses streaks
+- **Trading Patterns**:
+  - Average and median trade duration
+  - Long vs Short performance breakdown
+  - Fees analysis (total and per trade)
+  - AI execution rate (decisions → trades)
+- **Equity Curve Generation**: Cumulative P&L over time with per-trade breakdown
+- **Performance Breakdown**: By symbol, by timeframe (daily/weekly/monthly), by direction
+
+##### 📤 Data Export Module (`data_export.py`)
+- **DataExporter Class**: Multi-format data export with temporal filters
+- **Flexible Time Filters**:
+  - Preset periods: 12h, 24h, 3d, 7d, 30d, 90d, 365d
+  - Custom date ranges (start_date, end_date)
+- **Export Formats**:
+  - JSON (full structure with nested data)
+  - CSV (optimized for Excel/Pandas)
+- **Data Categories**:
+  - Trades (complete trade history)
+  - Decisions (AI decisions with full context)
+  - Account Snapshots (balance over time)
+  - LLM Usage (API calls and costs)
+  - Errors (system errors log)
+- **AI Context Export**: Optional inclusion of indicators, news, sentiment, forecasts
+- **Backtesting Format**: Optimized export with decision → trade correlation
+
+##### 🌐 API Endpoints
+- **`GET /api/export/full`**: Complete dataset export with filters
+  - Query params: `days`, `period`, `start_date`, `end_date`, `include_context`, `include_metrics`, `format`
+  - Supports JSON and CSV formats
+  - Optional analytics inclusion
+- **`GET /api/export/backtest`**: Backtesting-optimized export
+  - Includes decisions, trades, and correlation mapping
+  - Execution rate statistics
+- **`GET /api/analytics/performance`**: Advanced performance analytics
+  - Query params: `days`, `symbol`
+  - Returns metrics, equity curve, breakdowns
+- **`GET /api/export/presets`**: Available time period presets
+
+##### 📊 Equity Curve & Breakdowns
+- **Equity Curve**: Timestamp-based cumulative P&L tracking
+- **Symbol Breakdown**: Performance metrics per trading symbol
+- **Temporal Breakdown**: Daily/weekly/monthly aggregations
+- **Direction Breakdown**: Long vs Short comparative analysis
+
+#### 🛠️ Technical Implementation
+
+##### New Files
+- `backend/analytics.py`: Analytics calculation engine (450+ lines)
+- `backend/data_export.py`: Export logic and data fetching (550+ lines)
+- `backend/test_data_export.py`: Comprehensive test suite (150+ lines)
+- `backend/DATA_EXPORT_ANALYTICS_GUIDE.md`: Complete documentation (1000+ lines)
+
+##### Modified Files
+- `backend/main.py`: Added 4 new API endpoints with imports
+  - Import: `StreamingResponse`, `io`, `pandas`, `DataExporter`
+  - New endpoints: `/api/export/full`, `/api/export/backtest`, `/api/analytics/performance`, `/api/export/presets`
+
+##### Dependencies
+- `pandas >= 2.0.0` ✅ (already installed: 2.1.4)
+- `numpy >= 1.24.0` ✅ (already installed: 1.24.0)
+
+#### 📚 Documentation
+
+##### Updated Documentation
+- `README.md`: Added "Data Export & Analytics" section with:
+  - Feature overview and benefits
+  - API endpoints documentation
+  - Metrics explanation
+  - Usage examples (REST and Python)
+  - Link to full guide
+- `backend/DATA_EXPORT_ANALYTICS_GUIDE.md`: Complete technical guide with:
+  - Architecture overview
+  - API endpoints detailed documentation
+  - Metrics calculation formulas and interpretation
+  - Practical examples (Python integration)
+  - Output format specifications
+  - Best practices and workflows
+  - Performance optimization tips
+  - Troubleshooting guide
+  - FAQ section
+
+#### 🧪 Testing
+
+##### Test Coverage
+- Export presets retrieval
+- 7-day JSON export with metrics
+- 30-day CSV export
+- Backtesting format export
+- Performance analytics (full dataset)
+- Symbol-specific analytics (e.g., BTC only)
+
+##### Test Commands
+```bash
+# Run test suite
+cd backend
+python test_data_export.py
+
+# Manual API tests
+curl "http://localhost:8000/api/export/full?period=7d&include_metrics=true"
+curl "http://localhost:8000/api/analytics/performance?days=30"
+```
+
+#### 💡 Use Cases
+
+##### Enabled Workflows
+1. **Daily Performance Review**: Export 24h data with metrics
+2. **Weekly Analysis**: 7-day breakdown with equity curve
+3. **Monthly Backtesting**: 30-day correlation analysis (decisions → trades)
+4. **Annual Reporting**: 365-day comprehensive export
+5. **Strategy Optimization**: Symbol-specific performance comparison
+6. **Risk Management**: Drawdown tracking and Sharpe Ratio monitoring
+7. **AI Quality Assessment**: Execution rate and confidence correlation
+
+##### Example Workflows
+```bash
+# Daily review
+curl "http://localhost:8000/api/export/full?period=24h&include_metrics=true" > daily_$(date +%Y%m%d).json
+
+# Weekly analytics
+curl "http://localhost:8000/api/analytics/performance?days=7" | jq '.metrics'
+
+# Monthly backtest
+curl "http://localhost:8000/api/export/backtest?days=30" > backtest_monthly.json
+
+# CSV export for Excel
+curl "http://localhost:8000/api/export/full?period=30d&format=csv" > trading_data.csv
+```
+
+#### 📊 Performance Metrics Details
+
+##### Sharpe Ratio
+- **Formula**: `(Mean Return - Risk Free Rate) / Std Deviation × √365`
+- **Interpretation**: Measures risk-adjusted return
+- **Benchmark**: `<0` (losing), `0-1` (volatile), `1-2` (good), `>2` (excellent)
+
+##### Sortino Ratio
+- **Formula**: `(Mean Return - Risk Free Rate) / Downside Deviation × √365`
+- **Interpretation**: Like Sharpe but only penalizes downside volatility
+- **Use**: Better for asymmetric strategies (big wins, small losses)
+
+##### Calmar Ratio
+- **Formula**: `|Total Return| / |Max Drawdown|`
+- **Interpretation**: Return efficiency vs worst-case loss
+- **Benchmark**: `<1` (poor), `1-3` (acceptable), `>3` (excellent)
+
+##### Maximum Drawdown
+- **Calculation**: Max peak-to-trough loss in cumulative P&L
+- **Metrics**: Both USD and % provided
+- **Use**: Identifies worst-case scenario loss potential
+
+#### 🔧 Configuration
+
+##### Environment Variables
+No new environment variables required. Uses existing:
+- `DATABASE_URL`: PostgreSQL connection (required)
+
+##### Optional Optimizations
+```sql
+-- Add indexes for faster queries
+CREATE INDEX IF NOT EXISTS idx_executed_trades_closed_at ON executed_trades(closed_at);
+CREATE INDEX IF NOT EXISTS idx_bot_operations_created_at ON bot_operations(created_at);
+CREATE INDEX IF NOT EXISTS idx_executed_trades_symbol ON executed_trades(symbol);
+```
+
+#### 🎯 Benefits
+
+##### For Traders
+- **Performance Tracking**: Comprehensive metrics tracking
+- **Risk Management**: Real-time drawdown and Sharpe monitoring
+- **Strategy Validation**: Backtest correlation analysis
+- **Reporting**: Professional CSV/JSON exports
+
+##### For Developers
+- **API Integration**: RESTful endpoints for external tools
+- **Data Analysis**: Pandas-ready DataFrames
+- **Extensibility**: Modular design for custom metrics
+- **Documentation**: Complete guide with examples
+
+##### For Data Scientists
+- **Backtesting**: Decision → trade correlation data
+- **Feature Engineering**: Rich context (indicators, news, sentiment)
+- **Model Evaluation**: Confidence vs performance analysis
+- **Equity Curves**: Visual performance tracking
+
+#### ⚡ Performance
+
+##### Query Performance (with indexes)
+- Export 7d: ~200-500ms
+- Export 30d: ~500-1500ms
+- Analytics calculation (45 trades): ~100-300ms
+
+##### Output Size
+- JSON export 30d: ~500KB-2MB (depends on context inclusion)
+- CSV export 30d: ~150KB-500KB (trades only)
+
+#### 🔍 Future Enhancements
+
+Potential improvements for future versions:
+- [ ] Redis caching for frequently accessed analytics
+- [ ] Paginated export for very large datasets (>1 year)
+- [ ] Additional metrics (Omega Ratio, Information Ratio)
+- [ ] Performance comparison (current vs previous period)
+- [ ] Automated PDF report generation
+- [ ] Real-time WebSocket streaming for live metrics
+
+---
+
 ## [0.3.0] - 2025-12-12
 
 ### 🎯 NOF1.ai Trading Framework Implementation

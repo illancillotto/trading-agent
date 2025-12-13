@@ -1,6 +1,6 @@
 # Trading Agent
 
-**Versione: 0.2.0** 🎉
+**Versione: 0.4.1** 🎉
 
 Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.ai/), una piattaforma di trading AI-driven che promuove la competizione tra agenti LLMs. L'obiettivo di questo progetto è sviluppare un agente di trading automatizzato, capace di analizzare dati di mercato, notizie, sentiment e segnali provenienti da grandi movimenti ("whale alert") per prendere decisioni di trading informate.
 
@@ -17,6 +17,7 @@ Trading Agent è un progetto open source ispirato a [Alpha Arena](https://nof1.a
   - **Fase Scouting**: Analizza a rotazione batch di nuove coin (5 per ciclo) per trovare nuove opportunità senza sovraccaricare l'AI.
 - **Analisi Manuale**: possibilità di eseguire analisi on-demand su specifiche coin senza interrompere il bot.
 - **🆕 Market Microstructure Analysis**: Analisi avanzata order book multi-exchange, whale detection, liquidazioni e sentiment aggregato (v0.2.0).
+- **🆕 Telegram Instant View**: Pagine HTML dettagliate per ogni trade direttamente in Telegram (v0.2.1).
 
 ## 📊 Dashboard Web
 
@@ -36,6 +37,95 @@ pnpm install
 pnpm dev
 ```
 La dashboard sarà accessibile a `http://localhost:5621`.
+
+## 📱 Telegram Bot & Instant View
+
+Il Trading Agent supporta notifiche Telegram avanzate con **Instant View** per visualizzazioni dettagliate dei trade direttamente in Telegram senza aprire browser esterni.
+
+### 🤖 Telegram Bot Features
+
+- **Controllo Remoto**: Avvia/ferma trading, consulta posizioni, visualizza stato
+- **Notifiche Push**: Trade aperti/chiusi, circuit breaker, errori critici
+- **Riepilogo Giornaliero**: Performance giornaliera automatica
+- **Sicurezza**: Solo chat ID autorizzato può controllare il bot
+
+### 📊 Telegram Instant View
+
+Quando ricevi una notifica trade, clicca su "📊 View Full Details" per aprire una pagina HTML dettagliata direttamente in Telegram:
+
+- **📈 Metriche P&L**: Colori dinamici (verde/rosso) con percentuali
+- **📊 Trade Details**: Entry/exit, leverage, stop loss, take profit, fees
+- **🤖 AI Context**: Confidence level, reasoning, indicatori tecnici, news rilevanti
+- **💹 Market Sentiment**: Fear & Greed Index e sentiment classification
+- **🔮 Price Forecasts**: Previsioni prezzo con expected change
+- **📱 Mobile Optimized**: Design responsive per dispositivi mobili
+
+### ⚡ Setup Telegram Integration
+
+1. **Crea Bot Telegram**:
+   ```bash
+   # Cerca @BotFather su Telegram
+   # Invia /newbot e segui istruzioni
+   # Copia il Bot Token
+   ```
+
+2. **Ottieni Chat ID**:
+   ```bash
+   # Cerca @userinfobot su Telegram
+   # Invia /start e copia Chat ID
+   ```
+
+3. **Configura .env**:
+   ```env
+   TELEGRAM_BOT_TOKEN=your_bot_token_here
+   TELEGRAM_CHAT_ID=your_chat_id_here
+   PUBLIC_BASE_URL=https://your-domain.com  # Per Instant View
+   ```
+
+4. **Test Notifiche**:
+   ```bash
+   cd backend
+   python example_telegram_integration.py
+   ```
+
+### 🎯 Instant View Setup (Produzione)
+
+Per Instant View completo, configura un dominio pubblico HTTPS:
+
+1. **Deploy Backend** su URL pubblico (Railway/VPS)
+2. **Crea Template** su https://instantview.telegram.org/
+3. **Configura** `PUBLIC_BASE_URL=https://your-domain.com`
+4. **Approva Template** (24-48 ore)
+
+Vedi [`TELEGRAM_INSTANT_VIEW_SETUP.md`](TELEGRAM_INSTANT_VIEW_SETUP.md) per guida completa.
+
+### 📱 Comandi Telegram Bot
+
+- `/start` - Menu principale e info bot
+- `/status` - Stato trading engine
+- `/balance` - Saldo wallet attuale
+- `/positions` - Posizioni aperte
+- `/today` - Performance giornaliera
+- `/config` - Configurazione sistema
+- `/stop` - Ferma trading (con conferma)
+- `/resume` - Riprendi trading
+- `/help` - Lista comandi completa
+
+### 📋 Notifiche Automatiche
+
+Il bot invia notifiche per:
+- ✅ **Trade Aperti**: Entry price, size, leverage, link Instant View
+- ✅ **Trade Chiusi**: P&L, exit reason, link analisi completa
+- 🚨 **Circuit Breaker**: Quando il sistema si ferma automaticamente
+- ❌ **Errori Critici**: Problemi che richiedono attenzione
+- 📊 **Riepilogo Giornaliero**: Performance e statistiche
+
+### 🔒 Sicurezza
+
+- **Chat ID Whitelist**: Solo il tuo chat ID può controllare il bot
+- **Conferme Richieste**: Azioni critiche (`/stop`) richiedono conferma
+- **Logging Sicuro**: Comandi loggati senza dati sensibili
+- **HTTPS Required**: Instant View richiede certificati SSL validi
 
 ## 🚀 Docker Deployment
 
@@ -216,6 +306,103 @@ python manual_analysis.py ETH
 ```
 
 Questo script eseguirà l'intero processo decisionale (fetch dati, analisi tecnica, news, sentiment, decisione AI, trend check) e mostrerà il risultato nei log.
+
+## 📊 Data Export & Analytics
+
+Il sistema include un modulo completo per **Data Export** e **Analytics Avanzate** che permette di:
+
+- **Esportare dati completi** in JSON/CSV con filtri temporali flessibili
+- **Analizzare performance** con metriche finanziarie avanzate (Sharpe, Sortino, Calmar, Max DD)
+- **Correlare** decisioni AI → trade eseguiti → risultati effettivi
+- **Generare** equity curve e breakdown dettagliati per backtesting
+
+### 🎯 Caratteristiche Export & Analytics
+
+- **Filtri Temporali Flessibili**: preset (12h, 24h, 3d, 7d, 30d, 90d, 365d) + custom date range
+- **Formati Multipli**: JSON per analisi programmatica, CSV per Excel/Python
+- **Contesto AI Completo**: include indicators, news, sentiment, forecasts per ogni decisione
+- **Metriche Risk-Adjusted**: Sharpe Ratio, Sortino Ratio, Calmar Ratio
+- **Drawdown Analysis**: Max drawdown in USD e percentuale
+- **Performance Breakdown**: Per simbolo, per periodo (daily/weekly/monthly), per direzione (long/short)
+- **Trading Patterns**: Consecutive wins/losses, trade duration, execution rate
+- **Equity Curve**: Cumulative P&L nel tempo con breakdown per trade
+
+### 📡 API Endpoints Export & Analytics
+
+```bash
+# Export completo 7 giorni con analytics
+GET /api/export/full?period=7d&include_metrics=true
+
+# Export 30 giorni CSV
+GET /api/export/full?period=30d&format=csv
+
+# Export formato backtesting
+GET /api/export/backtest?days=30
+
+# Performance analytics avanzate
+GET /api/analytics/performance?days=30
+
+# Performance per simbolo specifico
+GET /api/analytics/performance?days=30&symbol=BTC
+
+# Lista preset periodi disponibili
+GET /api/export/presets
+```
+
+### 📈 Metriche Calcolate
+
+**Risk-Adjusted:**
+- Sharpe Ratio (annualizzato)
+- Sortino Ratio (downside deviation)
+- Calmar Ratio (return/max drawdown)
+- Maximum Drawdown (USD e %)
+
+**Performance:**
+- Win Rate complessivo e per direzione
+- Profit Factor (total wins / total losses)
+- Average Win/Loss (USD e %)
+- Largest Win/Loss
+- Consecutive wins/losses streaks
+
+**Trading Patterns:**
+- Average trade duration
+- Median trade duration
+- Long vs Short performance
+- Fees totali e per trade
+- AI execution rate (decisioni → trade)
+
+### 💻 Utilizzo
+
+**Da API REST:**
+```bash
+# Export completo 7 giorni con analytics
+curl "http://localhost:8000/api/export/full?period=7d&include_metrics=true" | jq .
+
+# Download CSV 30 giorni
+curl "http://localhost:8000/api/export/full?period=30d&format=csv" > trading_data.csv
+
+# Performance analytics
+curl "http://localhost:8000/api/analytics/performance?days=30" | jq .
+```
+
+**Da Python:**
+```python
+import requests
+
+# Export completo
+response = requests.get("http://localhost:8000/api/export/full?period=7d&include_metrics=true")
+data = response.json()
+
+# Accedi ai dati
+trades = data['data']['trades']
+analytics = data['analytics']['performance_metrics']
+
+print(f"Win Rate: {analytics['win_rate']:.2%}")
+print(f"Sharpe Ratio: {analytics['sharpe_ratio']}")
+print(f"Max Drawdown: ${analytics['max_drawdown_usd']:.2f}")
+```
+
+Vedi [`DATA_EXPORT_ANALYTICS_GUIDE.md`](backend/DATA_EXPORT_ANALYTICS_GUIDE.md) per documentazione completa.
 
 ## 📊 Market Microstructure Analysis
 

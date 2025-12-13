@@ -982,18 +982,33 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                         duration = datetime.now(timezone.utc) - entry_time
                                         duration_minutes = duration.total_seconds() / 60
 
-                                    notifier.notify_trade_closed(
+                                    # Send Instant View notification
+                                    from notifications import send_trade_notification
+                                    # Get trade data for size and leverage
+                                    try:
+                                        with db_utils.get_connection() as conn:
+                                            with conn.cursor() as cur:
+                                                cur.execute("""
+                                                    SELECT size, leverage FROM executed_trades WHERE id = %s
+                                                """, (trade_id,))
+                                                trade_row = cur.fetchone()
+                                                size = float(trade_row[0]) if trade_row and trade_row[0] else 0
+                                                leverage = int(trade_row[1]) if trade_row and trade_row[1] else 1
+                                    except Exception:
+                                        size = 0
+                                        leverage = 1
+
+                                    send_trade_notification(
+                                        trade_id=trade_id,
                                         symbol=sym_manage,
                                         direction=position.get("side", "unknown") if position else "unknown",
-                                        pnl=pnl_usd or 0.0,
-                                        pnl_pct=pnl_pct or 0.0,
-                                        reason="Signal AI",
+                                        action='closed',
                                         entry_price=entry_price,
-                                        exit_price=exit_price,
-                                        size_usd=position.get("size_usd") if position else None,
-                                        duration_minutes=duration_minutes,
-                                        trade_id=trade_id,
-                                        details_url=details_url
+                                        size=size,
+                                        leverage=leverage,
+                                        pnl_usd=pnl_usd,
+                                        pnl_pct=pnl_pct,
+                                        exit_reason="Signal AI"
                                     )
                                 except Exception as e:
                                     logger.warning(f"⚠️ Notify error: {e}")
@@ -1401,16 +1416,16 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                                     api_url = os.getenv("PUBLIC_API_URL", "https://static.9.126.98.91.clients.your-server.de")
                                                     details_url = f"{api_url}/api/trades/{trade_id}/details"
     
-                                                    notifier.notify_trade_opened(
+                                                    # Send Instant View notification
+                                                    from notifications import send_trade_notification
+                                                    send_trade_notification(
+                                                        trade_id=trade_id,
                                                         symbol=sym_scout,
                                                         direction=direction,
-                                                        size_usd=size_usd,
-                                                        leverage=decision_scout.get("leverage", 1),
+                                                        action='opened',
                                                         entry_price=entry_price or 0,
-                                                        stop_loss=stop_loss_price,
-                                                        take_profit=take_profit_price,
-                                                        trade_id=trade_id,
-                                                        details_url=details_url
+                                                        size=res.get("size", 0),
+                                                        leverage=decision_scout.get("leverage", 1)
                                                     )
                                                 except Exception as e:
                                                     logger.warning(f"⚠️ Notify error: {e}")

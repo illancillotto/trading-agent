@@ -10,6 +10,7 @@ import { SystemConfig } from './SystemConfig'
 import { DecisionViewer } from './DecisionViewer'
 import { DecisionHistory } from './DecisionHistory'
 import { BacktrackAnalysis } from './BacktrackAnalysis'
+import { DataExport } from './DataExport'
 
 interface BalancePoint {
   timestamp: string
@@ -50,6 +51,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'export'>('dashboard')
 
   // Removed activeTickers state as MarketData component is removed
   // const [activeTickers, setActiveTickers] = useState<string[]>(['BTC'])
@@ -172,21 +174,54 @@ export function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">Trading Agent Dashboard</h1>
           <p className="text-sm text-muted-foreground">Monitoraggio in tempo reale</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className={`rounded-full border border-gray-200 px-4 py-2 text-sm font-medium bg-white text-gray-700 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 inline-flex items-center gap-2 transition-all shadow-sm ${refreshing ? 'opacity-70 cursor-not-allowed' : ''}`}
-        >
-          <span>{refreshing ? 'Aggiornamento...' : 'Aggiorna tutto'}</span>
-          <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-        </button>
+        {activeTab === 'dashboard' && (
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className={`rounded-full border border-gray-200 px-4 py-2 text-sm font-medium bg-white text-gray-700 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 inline-flex items-center gap-2 transition-all shadow-sm ${refreshing ? 'opacity-70 cursor-not-allowed' : ''}`}
+          >
+            <span>{refreshing ? 'Aggiornamento...' : 'Aggiorna tutto'}</span>
+            <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
+        )}
       </div>
 
-      {/* Main Grid Layout */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_450px] 2xl:grid-cols-[1.5fr_500px] gap-6 items-start">
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="flex space-x-8" aria-label="Tabs">
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'dashboard'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => setActiveTab('export')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'export'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Data Export & Analytics
+          </button>
+        </nav>
+      </div>
 
-        {/* Left Column */}
-        <div className="space-y-6 min-w-0">
+      {/* Tab Content */}
+      {activeTab === 'export' && <DataExport />}
+
+      {activeTab === 'dashboard' && (
+        <>
+          {/* Main Grid Layout */}
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_450px] 2xl:grid-cols-[1.5fr_500px] gap-6 items-start">
+
+            {/* Left Column */}
+            <div className="space-y-6 min-w-0">
 
           {/* Performance Overview */}
           <PerformanceOverview balance={balance} />
@@ -307,6 +342,8 @@ export function Dashboard() {
         </aside>
 
       </div>
+        </>
+      )}
     </div>
   )
 }

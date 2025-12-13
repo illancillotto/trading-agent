@@ -282,5 +282,64 @@ Il bot non aprirà nuove posizioni fino a domani.
             logger.error("❌ Fallito invio notifica di avvio")
 
 
+def send_trade_notification(
+    trade_id: int,
+    symbol: str,
+    direction: str,
+    action: str,  # 'opened' o 'closed'
+    entry_price: float,
+    size: float,
+    leverage: int,
+    pnl_usd: Optional[float] = None,
+    pnl_pct: Optional[float] = None,
+    exit_reason: Optional[str] = None
+):
+    """
+    Invia notifica Telegram con link a Instant View
+    """
+    try:
+        # Base URL (da environment variable)
+        base_url = os.getenv("PUBLIC_BASE_URL", "https://trading-dashboard.up.railway.app")
+
+        # URL Instant View
+        trade_url = f"{base_url}/trade-view/{trade_id}"
+
+        # Costruisci messaggio
+        if action == 'opened':
+            emoji = "🟢" if direction == "long" else "🔴"
+            message = f"""
+{emoji} <b>{symbol} {direction.upper()} OPENED</b>
+
+💰 Entry: ${entry_price:,.2f}
+📊 Size: {size:.4f} {symbol}
+⚡ Leverage: {leverage}x
+💵 Notional: ${entry_price * size:,.2f}
+
+<a href="{trade_url}">📊 View Full Details</a>
+            """.strip()
+
+        else:  # closed
+            emoji = "✅" if (pnl_usd or 0) >= 0 else "❌"
+            pnl_emoji = "📈" if (pnl_usd or 0) >= 0 else "📉"
+
+            message = f"""
+{emoji} <b>{symbol} {direction.upper()} CLOSED</b>
+
+{pnl_emoji} P&L: ${pnl_usd:,.2f} ({pnl_pct:+.2f}%)
+📊 Exit Reason: {exit_reason or 'Manual'}
+💰 Entry: ${entry_price:,.2f}
+
+<a href="{trade_url}">📊 View Full Analysis</a>
+            """.strip()
+
+        # Invia notifica (usa la tua funzione esistente)
+        notifier.send(message, parse_mode='HTML')
+
+        logger.info(f"Telegram notification sent for trade {trade_id} with IV link")
+
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
+
+
 # Istanza globale
 notifier = TelegramNotifier()
