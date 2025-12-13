@@ -79,6 +79,49 @@ TRADE_DECISION_SCHEMA = {
             "minLength": 10,
             "maxLength": 500,
             "description": "Detailed explanation of the decision"
+        },
+        "timeframe_analysis": {
+            "type": "object",
+            "properties": {
+                "short_term_15m": {
+                    "type": "string",
+                    "enum": ["bullish", "bearish", "neutral"],
+                    "description": "15-minute timeframe trend"
+                },
+                "medium_term_4h": {
+                    "type": "string",
+                    "enum": ["bullish", "bearish", "neutral"],
+                    "description": "4-hour timeframe trend"
+                },
+                "long_term_daily": {
+                    "type": "string",
+                    "enum": ["bullish", "bearish", "neutral"],
+                    "description": "Daily timeframe trend"
+                },
+                "alignment": {
+                    "type": "boolean",
+                    "description": "Whether all timeframes agree"
+                }
+            },
+            "description": "Multi-timeframe analysis (NOF1.ai enhanced prompt)"
+        },
+        "market_context": {
+            "type": "object",
+            "properties": {
+                "regime_matches": {
+                    "type": "boolean",
+                    "description": "Whether trade direction matches regime's preferred direction"
+                },
+                "entry_quality_ok": {
+                    "type": "boolean",
+                    "description": "Whether entry timing is good/fair (not 'wait')"
+                },
+                "sentiment_extreme": {
+                    "type": "boolean",
+                    "description": "Whether Fear&Greed is in extreme zone (<20 or >80)"
+                }
+            },
+            "description": "Market context flags (NOF1.ai enhanced prompt)"
         }
     },
     "required": [
@@ -94,7 +137,7 @@ TRADE_DECISION_SCHEMA = {
         "risk_usd",
         "reason"
     ],
-    "additionalProperties": False
+    "additionalProperties": True
 }
 
 

@@ -49,6 +49,9 @@ from sentiment import get_sentiment
 from forecaster import get_crypto_forecasts
 from hyperliquid_trader import HyperLiquidTrader
 
+# NOF1.ai Prompt Manager
+from prompts.trading_system_prompt import TradingSystemPrompt
+
 # NOF1.ai Configuration
 try:
     from config import SCALPING_MODE_ENABLED, PRIMARY_TIMEFRAME, SECONDARY_TIMEFRAME
@@ -210,6 +213,7 @@ class BotState:
         self.trend_engine: Optional[TrendConfirmationEngine] = None
         self.regime_detector: Optional[RegimeDetector] = None
         self.confidence_calibrator: Optional[ConfidenceCalibrator] = None
+        self.prompt_manager: Optional[TradingSystemPrompt] = None  # NOF1.ai Prompt Manager
         self.active_trades: dict[str, int] = {}  # symbol -> trade_id mapping
         self.rotation_index: int = 0             # Indice per rotazione coin
         self.initialized: bool = False
@@ -323,6 +327,14 @@ class BotState:
                     logger.warning(f"⚠️ Confidence Calibrator init failed (non-critical): {e}")
                     self.confidence_calibrator = None
 
+            # Initialize NOF1.ai Prompt Manager
+            try:
+                self.prompt_manager = TradingSystemPrompt()
+                logger.info("✅ NOF1.ai Prompt Manager inizializzato")
+            except Exception as e:
+                logger.warning(f"⚠️ Prompt Manager init failed (falling back to legacy prompt): {e}")
+                self.prompt_manager = None
+
             self.initialized = True
             return True
 
@@ -334,6 +346,161 @@ class BotState:
 
 # Istanza globale
 bot_state = BotState()
+
+
+# ============================================================
+#                    PROMPT BUILDING FUNCTIONS
+# ============================================================
+
+def build_prompt_with_new_system(
+    prompt_manager: 'TradingSystemPrompt',
+    performance_metrics: Dict[str, float],
+    account_status: Dict,
+    indicators_map: Dict,
+    tickers: List[str],
+    news_txt: str,
+    sentiment_txt: str,
+    sentiment_json: Dict,
+    forecasts_map: Dict,
+    whale_alerts_txt: str,
+    risk_manager: 'RiskManager',
+    regime_analyses: Optional[Dict] = None,
+    qualified_candidates: Optional[List[Dict]] = None,
+    phase: str = "management"
+) -> str:
+    """
+    Build prompt using the new NOF1.ai prompt system.
+
+    Args:
+        prompt_manager: TradingSystemPrompt instance
+        performance_metrics: Dict with sharpe_ratio, win_rate, etc.
+        account_status: Account status dict
+        indicators_map: Map of ticker -> indicators
+        tickers: List of tickers to analyze
+        news_txt: News text
+        sentiment_txt: Sentiment text
+        sentiment_json: Sentiment JSON data
+        forecasts_map: Map of ticker -> forecast
+        whale_alerts_txt: Whale alerts text
+        risk_manager: RiskManager instance
+        regime_analyses: Optional regime analysis dict
+        qualified_candidates: Optional pre-qualified candidates
+        phase: "management" or "scouting"
+
+    Returns:
+        Complete prompt string
+    """
+
+    # Format portfolio data
+    portfolio_data = f"""
+**Account Balance**: ${account_status.get('balance_usd', 0):.2f}
+**Available Cash**: ${account_status.get('available_cash', account_status.get('balance_usd', 0)):.2f}
+**Total Positions Value**: ${account_status.get('positions_value', 0):.2f}
+
+**Open Positions**:
+"""
+
+    open_positions = account_status.get('open_positions', [])
+    if not open_positions:
+        portfolio_data += "\nNo open positions.\n"
+    else:
+        for pos in open_positions:
+            portfolio_data += f"""
+- {pos['symbol']} {pos['side']}:
+  Entry: ${pos.get('entry_price', 0):.2f}
+  Current: ${pos.get('current_price', 0):.2f}
+  Size: {pos.get('size', 0)} ({pos.get('size_usd', 0):.2f} USD)
+  P&L: ${pos.get('unrealized_pnl', 0):.2f} ({pos.get('pnl_pct', 0):+.2f}%)
+  Leverage: {pos.get('leverage', 1)}x
+"""
+
+    # Format market data for each ticker
+    # TODO: In future, fetch real multi-timeframe data (15m, 4h, daily)
+    # For now, we replicate the same data across timeframes for compatibility
+
+    market_data_parts = []
+    for ticker in tickers:
+        if ticker not in indicators_map:
+            continue
+
+        ind = indicators_map[ticker]
+        current = ind.get('current', {})
+
+        ticker_data = f"""
+**{ticker}**:
+- Price: ${current.get('price', 0):.2f}
+- EMA20: ${current.get('ema_20', 0):.2f}, EMA50: ${current.get('ema_50', 0):.2f}
+- MACD: {current.get('MACD', 0):.4f}, Signal: {current.get('MACD_signal', 0):.4f}
+- RSI(14): {current.get('RSI', 50):.2f}
+- Volume: {current.get('volume', 0):,.0f}
+- ATR: {current.get('ATR', 0):.2f}
+"""
+        market_data_parts.append(ticker_data)
+
+    # Combine market data (same for all timeframes for now)
+    market_data_combined = "\n".join(market_data_parts)
+
+    # NOTE: For now, we use the same data for all timeframes
+    # TODO: Implement real multi-timeframe data fetching
+    market_data_15m = f"**Current Market State (15-minute perspective)**:\n{market_data_combined}"
+    market_data_4h = f"**Current Market State (4-hour perspective)**:\n{market_data_combined}"
+    market_data_daily = f"**Current Market State (daily perspective)**:\n{market_data_combined}"
+
+    # Format regime analysis if available
+    regime_context = None
+    if regime_analyses:
+        regime_lines = []
+        for ticker, analysis in regime_analyses.items():
+            params = analysis.recommended_params
+            regime_lines.append(
+                f"**{ticker}**: {analysis.regime.value} (confidence: {analysis.confidence:.0%})\n"
+                f"  - ADX: {analysis.adx_value:.1f}, Volatility %: {analysis.volatility_percentile:.0f}\n"
+                f"  - Strategy: {params.get('strategy', 'N/A')}\n"
+                f"  - Preferred direction: {params.get('preferred_direction', 'any')}\n"
+                f"  - Leverage multiplier: {params.get('leverage_multiplier', 1.0):.2f}x\n"
+                f"  - {params.get('description', '')}"
+            )
+            if analysis.warnings:
+                regime_lines.append(f"  ⚠️ **Warnings**: {', '.join(analysis.warnings)}")
+
+        regime_context = "\n".join(regime_lines)
+
+    # Format trend pre-analysis if available
+    trend_context = None
+    if qualified_candidates:
+        trend_lines = []
+        for qc in qualified_candidates:
+            trend_lines.append(
+                f"**{qc['symbol']}**: {qc['direction']} trend, "
+                f"confidence {qc['confidence']:.0%}, "
+                f"quality {qc['quality']}, "
+                f"entry timing {qc['entry_quality']}"
+            )
+        trend_context = "\n".join(trend_lines)
+
+    # Format sentiment
+    sentiment_context = f"{sentiment_txt}\n\n**Sentiment Data**: {json.dumps(sentiment_json, indent=2)}"
+
+    # Build system prompt
+    system_prompt = prompt_manager.get_system_prompt()
+
+    # Build user prompt
+    user_prompt = prompt_manager.build_user_prompt(
+        performance_metrics=performance_metrics,
+        portfolio_data=portfolio_data,
+        market_data_15m=market_data_15m,
+        market_data_4h=market_data_4h,
+        market_data_daily=market_data_daily,
+        sentiment_data=sentiment_context,
+        regime_analysis=regime_context,
+        trend_preanalysis=trend_context
+    )
+
+    # Combine system + user prompt (legacy format expects them combined)
+    # The trading_agent function will use this as the full prompt
+    final_prompt = system_prompt + "\n\n" + user_prompt
+
+    return final_prompt
 
 
 # ============================================================
@@ -882,21 +1049,57 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
 Consecutive Losses: {risk_manager.consecutive_losses}
 </risk_status>
 """
-            # Load system prompt template
-            with open('system_prompt.txt', 'r') as f:
-                system_prompt_template = f.read()
-
-            # Replace performance metrics placeholder
-            system_prompt_with_perf = system_prompt_template.replace(
-                "{performance_metrics}",
-                performance_section
-            )
-
-            # Format prompt
-            final_prompt_manage = system_prompt_with_perf.format(
-                json.dumps(account_status, indent=2),
-                msg_info_manage
-            )
+            # Build prompt using new NOF1.ai system or fallback to legacy
+            if bot_state.prompt_manager:
+                # Use new NOF1.ai prompt system
+                try:
+                    final_prompt_manage = build_prompt_with_new_system(
+                        prompt_manager=bot_state.prompt_manager,
+                        performance_metrics={
+                            'sharpe_ratio': perf_metrics.sharpe_ratio if perf_metrics else 0.0,
+                            'win_rate': perf_metrics.win_rate if perf_metrics else 0.0,
+                            'avg_rr': perf_metrics.avg_rr if perf_metrics else 0.0,
+                            'consecutive_losses': risk_manager.consecutive_losses,
+                            'total_return_pct': perf_metrics.total_return if perf_metrics else 0.0
+                        },
+                        account_status=account_status,
+                        indicators_map=indicators_map,
+                        tickers=tickers_manage,
+                        news_txt=news_txt,
+                        sentiment_txt=sentiment_txt,
+                        sentiment_json=sentiment_json,
+                        forecasts_map=forecasts_map,
+                        whale_alerts_txt=whale_alerts_txt,
+                        risk_manager=risk_manager,
+                        phase="management"
+                    )
+                    logger.info("✅ Using new NOF1.ai prompt system (GESTIONE)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error with new prompt system, falling back to legacy: {e}")
+                    # Fallback to legacy prompt
+                    with open('system_prompt.txt', 'r') as f:
+                        system_prompt_template = f.read()
+                    system_prompt_with_perf = system_prompt_template.replace(
+                        "{performance_metrics}",
+                        performance_section
+                    )
+                    final_prompt_manage = system_prompt_with_perf.format(
+                        json.dumps(account_status, indent=2),
+                        msg_info_manage
+                    )
+            else:
+                # Fallback to legacy prompt system
+                logger.info("📜 Using legacy prompt system (prompt_manager not available)")
+                with open('system_prompt.txt', 'r') as f:
+                    system_prompt_template = f.read()
+                system_prompt_with_perf = system_prompt_template.replace(
+                    "{performance_metrics}",
+                    performance_section
+                )
+                final_prompt_manage = system_prompt_with_perf.format(
+                    json.dumps(account_status, indent=2),
+                    msg_info_manage
+                )
             
             # Call AI
             try:
@@ -1189,20 +1392,59 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                     # Calculate performance metrics (NOF1.ai) - reuse from earlier
                     # (performance_section already calculated above)
 
-                    # Load and format prompt
-                    with open('system_prompt.txt', 'r') as f:
-                        system_prompt_template = f.read()
-
-                    # Replace performance metrics placeholder
-                    system_prompt_with_perf_scout = system_prompt_template.replace(
-                        "{performance_metrics}",
-                        performance_section  # Already calculated earlier
-                    )
-
-                    final_prompt_scout = system_prompt_with_perf_scout.format(
-                        json.dumps(account_status, indent=2),
-                        msg_info_scout
-                    )
+                    # Build prompt using new NOF1.ai system or fallback to legacy
+                    if bot_state.prompt_manager:
+                        # Use new NOF1.ai prompt system
+                        try:
+                            final_prompt_scout = build_prompt_with_new_system(
+                                prompt_manager=bot_state.prompt_manager,
+                                performance_metrics={
+                                    'sharpe_ratio': perf_metrics.sharpe_ratio if perf_metrics else 0.0,
+                                    'win_rate': perf_metrics.win_rate if perf_metrics else 0.0,
+                                    'avg_rr': perf_metrics.avg_rr if perf_metrics else 0.0,
+                                    'consecutive_losses': risk_manager.consecutive_losses,
+                                    'total_return_pct': perf_metrics.total_return if perf_metrics else 0.0
+                                },
+                                account_status=account_status,
+                                indicators_map=indicators_map,
+                                tickers=tickers_scout,
+                                news_txt=news_txt,
+                                sentiment_txt=sentiment_txt,
+                                sentiment_json=sentiment_json,
+                                forecasts_map=forecasts_map,
+                                whale_alerts_txt=whale_alerts_txt,
+                                risk_manager=risk_manager,
+                                regime_analyses=regime_analyses if 'regime_analyses' in locals() else None,
+                                qualified_candidates=qualified_candidates if 'qualified_candidates' in locals() else None,
+                                phase="scouting"
+                            )
+                            logger.info("✅ Using new NOF1.ai prompt system (SCOUTING)")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Error with new prompt system, falling back to legacy: {e}")
+                            # Fallback to legacy prompt
+                            with open('system_prompt.txt', 'r') as f:
+                                system_prompt_template = f.read()
+                            system_prompt_with_perf_scout = system_prompt_template.replace(
+                                "{performance_metrics}",
+                                performance_section
+                            )
+                            final_prompt_scout = system_prompt_with_perf_scout.format(
+                                json.dumps(account_status, indent=2),
+                                msg_info_scout
+                            )
+                    else:
+                        # Fallback to legacy prompt system
+                        logger.info("📜 Using legacy prompt system (prompt_manager not available)")
+                        with open('system_prompt.txt', 'r') as f:
+                            system_prompt_template = f.read()
+                        system_prompt_with_perf_scout = system_prompt_template.replace(
+                            "{performance_metrics}",
+                            performance_section
+                        )
+                        final_prompt_scout = system_prompt_with_perf_scout.format(
+                            json.dumps(account_status, indent=2),
+                            msg_info_scout
+                        )
     
                     # Call AI
                     try:
