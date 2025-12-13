@@ -31,6 +31,9 @@ export function DecisionViewer() {
     const [decision, setDecision] = useState<DecisionData | null>(null)
     const [loading, setLoading] = useState(true)
 
+    // Check if device is mobile
+    const isMobile = () => window.innerWidth < 768
+
     const fetchData = async () => {
         try {
             // Fetch latest operation (limit 1)
@@ -62,8 +65,40 @@ export function DecisionViewer() {
 
     useEffect(() => {
         fetchData()
-        const interval = setInterval(fetchData, 10000) // Update every 10s
-        return () => clearInterval(interval)
+
+        let intervalId: NodeJS.Timeout | null = null
+
+        // Only set up auto-refresh if not on mobile and window is visible
+        const setupAutoRefresh = () => {
+            if (!isMobile() && !document.hidden) {
+                intervalId = setInterval(fetchData, 10000) // Update every 10s
+            } else if (intervalId) {
+                clearInterval(intervalId)
+                intervalId = null
+            }
+        }
+
+        // Set up initial auto-refresh
+        setupAutoRefresh()
+
+        // Handle visibility change
+        const handleVisibilityChange = () => {
+            setupAutoRefresh()
+        }
+
+        // Handle window resize for mobile detection
+        const handleResize = () => {
+            setupAutoRefresh()
+        }
+
+        document.addEventListener('visibilitychange', handleVisibilityChange)
+        window.addEventListener('resize', handleResize)
+
+        return () => {
+            if (intervalId) clearInterval(intervalId)
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+            window.removeEventListener('resize', handleResize)
+        }
     }, [])
 
     if (loading && !decision) {

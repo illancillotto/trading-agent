@@ -52,6 +52,7 @@ export function Dashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'export'>('dashboard')
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
 
   // Removed activeTickers state as MarketData component is removed
   // const [activeTickers, setActiveTickers] = useState<string[]>(['BTC'])
@@ -123,9 +124,17 @@ export function Dashboard() {
     }
   }
 
+  // Check if device is mobile
+  const isMobile = () => window.innerWidth < 768
+
   // Wrapper for button clicks
   const handleRefresh = () => {
     fetchData(0, true)
+  }
+
+  // Toggle auto-refresh
+  const toggleAutoRefresh = () => {
+    setAutoRefreshEnabled(!autoRefreshEnabled)
   }
 
   useEffect(() => {
@@ -134,12 +143,41 @@ export function Dashboard() {
       fetchData()
     }, 2000) // 2 second delay
 
-    const intervalId = setInterval(() => fetchData(0, true), 30000) // 30 secondi (30000 ms)
+    let intervalId: NodeJS.Timeout | null = null
+
+    // Only set up auto-refresh if enabled and not on mobile
+    const setupAutoRefresh = () => {
+      if (autoRefreshEnabled && !isMobile() && !document.hidden) {
+        intervalId = setInterval(() => fetchData(0, true), 30000) // 30 secondi (30000 ms)
+      } else if (intervalId) {
+        clearInterval(intervalId)
+        intervalId = null
+      }
+    }
+
+    // Set up initial auto-refresh
+    setupAutoRefresh()
+
+    // Handle visibility change
+    const handleVisibilityChange = () => {
+      setupAutoRefresh()
+    }
+
+    // Handle window resize for mobile detection
+    const handleResize = () => {
+      setupAutoRefresh()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('resize', handleResize)
+
     return () => {
       clearTimeout(initialDelay)
-      clearInterval(intervalId)
+      if (intervalId) clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('resize', handleResize)
     }
-  }, [])
+  }, [autoRefreshEnabled])
 
   if (loading) {
     return (
@@ -175,14 +213,29 @@ export function Dashboard() {
           <p className="text-sm text-muted-foreground">Monitoraggio in tempo reale</p>
         </div>
         {activeTab === 'dashboard' && (
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className={`rounded-full border border-gray-200 px-4 py-2 text-sm font-medium bg-white text-gray-700 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 inline-flex items-center gap-2 transition-all shadow-sm ${refreshing ? 'opacity-70 cursor-not-allowed' : ''}`}
-          >
-            <span>{refreshing ? 'Aggiornamento...' : 'Aggiorna tutto'}</span>
-            <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className={`rounded-full border border-gray-200 px-4 py-2 text-sm font-medium bg-white text-gray-700 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 inline-flex items-center gap-2 transition-all shadow-sm ${refreshing ? 'opacity-70 cursor-not-allowed' : ''}`}
+            >
+              <span>{refreshing ? 'Aggiornamento...' : 'Aggiorna tutto'}</span>
+              <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            </button>
+            <button
+              onClick={toggleAutoRefresh}
+              className={`rounded-full px-3 py-2 text-sm font-medium border transition-all shadow-sm ${
+                autoRefreshEnabled && !isMobile() && !document.hidden
+                  ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                  : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:bg-gray-50'
+              }`}
+              title={isMobile() ? 'Auto-refresh disabilitato su mobile' : autoRefreshEnabled ? 'Disabilita auto-refresh' : 'Abilita auto-refresh'}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          </div>
         )}
       </div>
 

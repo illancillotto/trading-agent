@@ -20,6 +20,8 @@ export function BotOperations({ operations }: BotOperationsProps) {
   const [expandedReasons, setExpandedReasons] = useState<Set<number>>(new Set())
   const [expandedPrompts, setExpandedPrompts] = useState<Set<number>>(new Set())
   const [expandedJsons, setExpandedJsons] = useState<Set<number>>(new Set())
+  const [copiedPrompts, setCopiedPrompts] = useState<Set<number>>(new Set())
+  const [copiedJsons, setCopiedJsons] = useState<Set<number>>(new Set())
 
   if (!operations || operations.length === 0) {
     return (
@@ -57,6 +59,33 @@ export function BotOperations({ operations }: BotOperationsProps) {
       newSet.add(id)
     }
     setExpandedJsons(newSet)
+  }
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+      return false
+    }
+  }
+
+  const copyPrompt = async (id: number, prompt: string) => {
+    const success = await copyToClipboard(prompt)
+    if (success) {
+      setCopiedPrompts(new Set([id]))
+      setTimeout(() => setCopiedPrompts(new Set()), 2000) // Reset after 2 seconds
+    }
+  }
+
+  const copyJson = async (id: number, payload: any) => {
+    const jsonString = JSON.stringify(payload, null, 2)
+    const success = await copyToClipboard(jsonString)
+    if (success) {
+      setCopiedJsons(new Set([id]))
+      setTimeout(() => setCopiedJsons(new Set()), 2000) // Reset after 2 seconds
+    }
   }
 
   const getReason = (op: BotOperation): string | null => {
@@ -219,13 +248,34 @@ export function BotOperations({ operations }: BotOperationsProps) {
             {/* Expandable Sections */}
             <div className="flex flex-col gap-1 border-t border-gray-100 pt-2 mt-2">
               {op.system_prompt && (
-                <button
-                  onClick={() => togglePrompt(op.id)}
-                  className="flex items-center justify-between w-full py-1.5 px-2 text-xs text-gray-500 hover:bg-gray-50 rounded transition-colors text-left"
-                >
-                  <span>Vedi full prompt</span>
-                  <span className="text-gray-400">{expandedPrompts.has(op.id) ? '▲' : '›'}</span>
-                </button>
+                <div className="flex items-center justify-between w-full">
+                  <button
+                    onClick={() => togglePrompt(op.id)}
+                    className="flex items-center gap-2 py-1.5 px-2 text-xs text-gray-500 hover:bg-gray-50 rounded transition-colors text-left flex-1"
+                  >
+                    <span>Vedi full prompt</span>
+                    <span className="text-gray-400">{expandedPrompts.has(op.id) ? '▲' : '›'}</span>
+                  </button>
+                  <button
+                    onClick={() => copyPrompt(op.id, op.system_prompt)}
+                    className={`p-1.5 text-xs rounded transition-colors ml-1 ${
+                      copiedPrompts.has(op.id)
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                    }`}
+                    title="Copia prompt negli appunti"
+                  >
+                    {copiedPrompts.has(op.id) ? (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               )}
               {expandedPrompts.has(op.id) && op.system_prompt && (
                 <div className="bg-gray-900 text-gray-300 p-3 rounded text-[10px] font-mono overflow-x-auto mb-2 whitespace-pre-wrap break-words max-h-[400px] overflow-y-auto">
@@ -233,13 +283,34 @@ export function BotOperations({ operations }: BotOperationsProps) {
                 </div>
               )}
 
-              <button
-                onClick={() => toggleJson(op.id)}
-                className="flex items-center justify-between w-full py-1.5 px-2 text-xs text-gray-500 hover:bg-gray-50 rounded transition-colors text-left"
-              >
-                <span>Vedi JSON completo</span>
-                <span className="text-gray-400">{expandedJsons.has(op.id) ? '▲' : '›'}</span>
-              </button>
+              <div className="flex items-center justify-between w-full">
+                <button
+                  onClick={() => toggleJson(op.id)}
+                  className="flex items-center gap-2 py-1.5 px-2 text-xs text-gray-500 hover:bg-gray-50 rounded transition-colors text-left flex-1"
+                >
+                  <span>Vedi JSON completo</span>
+                  <span className="text-gray-400">{expandedJsons.has(op.id) ? '▲' : '›'}</span>
+                </button>
+                <button
+                  onClick={() => copyJson(op.id, op.raw_payload)}
+                  className={`p-1.5 text-xs rounded transition-colors ml-1 ${
+                    copiedJsons.has(op.id)
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                  }`}
+                  title="Copia JSON negli appunti"
+                >
+                  {copiedJsons.has(op.id) ? (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
               {expandedJsons.has(op.id) && (
                 <div className="bg-gray-50 border border-gray-200 text-gray-700 p-3 rounded text-[10px] font-mono overflow-x-hidden mb-2 whitespace-pre-wrap break-words max-h-[400px] overflow-y-auto">
                   {JSON.stringify(op.raw_payload, null, 2)}
