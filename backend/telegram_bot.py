@@ -1,13 +1,16 @@
 """
 Bot Telegram interattivo per Trading Agent
 Gestisce comandi utente e notifiche in tempo reale
+Supporta sistema di permessi a due livelli (admin/pubblico) con rate limiting
 """
 import os
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Set
 from threading import Thread
+from functools import wraps
+from collections import defaultdict
 from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -26,6 +29,143 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# ============================================================
+# PERMISSION SYSTEM CONFIGURATION
+# ============================================================
+
+# Admin IDs - Caricato da variabile d'ambiente (comma-separated)
+ADMIN_TELEGRAM_IDS = os.getenv("ADMIN_TELEGRAM_IDS", "")
+ADMIN_IDS: Set[int] = set()
+if ADMIN_TELEGRAM_IDS:
+    try:
+        ADMIN_IDS = {int(x.strip()) for x in ADMIN_TELEGRAM_IDS.split(",") if x.strip()}
+        logger.info(f"✅ Admin IDs configurati: {len(ADMIN_IDS)} amministratori")
+    except ValueError as e:
+        logger.error(f"❌ Errore nel parsing ADMIN_TELEGRAM_IDS: {e}")
+
+# ============================================================
+# RATE LIMITING CONFIGURATION
+# ============================================================
+
+# Rate limiting settings
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))  # Max richieste
+RATE_LIMIT_WINDOW_MINUTES = int(os.getenv("RATE_LIMIT_WINDOW_MINUTES", "5"))  # Finestra temporale
+RATE_LIMIT_ADMIN_EXEMPT = os.getenv("RATE_LIMIT_ADMIN_EXEMPT", "true").lower() in ("true", "1", "yes")
+
+# Storage per tracking richieste (in produzione usare Redis)
+user_request_timestamps: Dict[int, List[datetime]] = defaultdict(list)
+
+# ============================================================
+# DISCLAIMER AND WELCOME MESSAGES
+# ============================================================
+
+DISCLAIMER = """
+⚠️ **IMPORTANTE - Leggere Attentamente**
+
+Questo bot è parte del progetto open source **Trading Agent**, ispirato a Alpha Arena.
+
+**Disclaimer:**
+- Solo scopo educativo e sperimentale
+- NON costituisce consulenza finanziaria
+- Il trading di criptovalute comporta rischi elevati
+- Possibile perdita totale del capitale investito
+- DYOR (Do Your Own Research)
+
+**Privacy:**
+- I comandi pubblici sono limitati (rate limiting)
+- Non vengono raccolti dati personali
+- Le statistiche sono aggregate
+
+🔗 Dashboard: https://trading-dashboard.up.railway.app/
+💻 GitHub: [link al repo]
+
+Usa /help per vedere i comandi disponibili.
+"""
+
+
+# ============================================================
+# PERMISSION SYSTEM FUNCTIONS
+# ============================================================
+
+def admin_only(func):
+    """Decorator per comandi riservati agli admin"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text(
+                "⛔ **Accesso negato**\n"
+                "Questo comando è riservato agli amministratori.\n\n"
+                "Usa /help per vedere i comandi disponibili.",
+                parse_mode='Markdown'
+            )
+            logger.warning(f"Tentativo accesso admin negato: user_id={user_id}, comando={update.message.text}")
+            return
+        return await func(update, context)
+    return wrapper
+
+def public_command(func):
+    """Decorator per comandi pubblici con rate limiting"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+
+        # Check rate limit
+        if not check_rate_limit(user_id):
+            await update.message.reply_text(
+                "⏱️ **Rate limit superato**\n"
+                "Hai raggiunto il limite di richieste. Riprova tra qualche minuto.",
+                parse_mode='Markdown'
+            )
+            logger.warning(f"Rate limit exceeded: user_id={user_id}")
+            return
+
+        return await func(update, context)
+    return wrapper
+
+def check_rate_limit(user_id: int) -> bool:
+    """
+    Verifica se l'utente ha superato il rate limit.
+    Returns True se la richiesta è permessa, False se rate limit superato.
+    """
+    # Admin esenti
+    if RATE_LIMIT_ADMIN_EXEMPT and user_id in ADMIN_IDS:
+        return True
+
+    now = datetime.now()
+    window_start = now - timedelta(minutes=RATE_LIMIT_WINDOW_MINUTES)
+
+    # Rimuovi timestamp vecchi
+    user_request_timestamps[user_id] = [
+        timestamp for timestamp in user_request_timestamps[user_id]
+        if timestamp > window_start
+    ]
+
+    # Check limite
+    if len(user_request_timestamps[user_id]) >= RATE_LIMIT_REQUESTS:
+        return False
+
+    # Aggiungi nuovo timestamp
+    user_request_timestamps[user_id].append(now)
+    return True
+
+def get_rate_limit_status(user_id: int) -> dict:
+    """Ottieni status rate limiting per un utente"""
+    now = datetime.now()
+    window_start = now - timedelta(minutes=RATE_LIMIT_WINDOW_MINUTES)
+
+    recent_requests = [
+        ts for ts in user_request_timestamps.get(user_id, [])
+        if ts > window_start
+    ]
+
+    return {
+        "requests_used": len(recent_requests),
+        "requests_limit": RATE_LIMIT_REQUESTS,
+        "window_minutes": RATE_LIMIT_WINDOW_MINUTES,
+        "requests_remaining": max(0, RATE_LIMIT_REQUESTS - len(recent_requests))
+    }
 
 
 class TradingTelegramBot:
@@ -83,38 +223,58 @@ class TradingTelegramBot:
             reply_markup=reply_markup
         )
 
-    def _is_authorized(self, update: Update) -> bool:
-        """Verifica se l'utente è autorizzato"""
+    def _is_authorized(self, update: Update, require_admin: bool = False) -> bool:
+        """
+        Verifica se l'utente è autorizzato
+
+        Args:
+            update: Update object da Telegram
+            require_admin: Se True, richiede permessi admin
+
+        Returns:
+            True se autorizzato, False altrimenti
+        """
         if not update.effective_chat:
             return False
 
+        user_id = update.effective_user.id if update.effective_user else None
         user_chat_id = str(update.effective_chat.id)
-        authorized = user_chat_id in self.chat_ids
 
-        if not authorized:
-            logger.warning(f"⚠️ Tentativo accesso non autorizzato da chat_id: {user_chat_id}")
+        if require_admin:
+            # Per comandi admin, controllare sia chat_id che user_id admin
+            chat_authorized = user_chat_id in self.chat_ids
+            admin_authorized = user_id in ADMIN_IDS if user_id else False
+            authorized = chat_authorized and admin_authorized
+
+            if not authorized:
+                logger.warning(f"⚠️ Tentativo accesso admin negato: chat_id={user_chat_id}, user_id={user_id}")
+        else:
+            # Per comandi pubblici, permettere sempre (rate limiting gestito dai decoratori)
+            authorized = True
 
         return authorized
 
-    async def _log_command(self, update: Update, command: str) -> None:
+    async def _log_command(self, update: Update, command: str, is_admin: bool = False) -> None:
         """Log di tutti i comandi ricevuti"""
         user = update.effective_user
         chat_id = update.effective_chat.id if update.effective_chat else "unknown"
-        logger.info(f"📝 Comando ricevuto: /{command} da {user.username or user.first_name} (chat_id: {chat_id})")
+        user_id = user.id if user else "unknown"
+        permission_level = "admin" if is_admin else "public"
+        logger.info(f"📝 Comando ricevuto: /{command} da {user.username or user.first_name} (user_id: {user_id}, chat_id: {chat_id}, level: {permission_level})")
 
     # ==================== COMMAND HANDLERS ====================
 
+    @public_command
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /start"""
-        await self._log_command(update, "start")
+        """Messaggio di benvenuto con disclaimer"""
+        user = update.effective_user
+        user_id = user.id if user else "unknown"
+        is_admin = user_id in ADMIN_IDS
 
-        if not self._is_authorized(update):
-            if update.message:
-                await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        await self._log_command(update, "start", is_admin)
 
-        # Determina stato e network
-        if self.trading_agent:
+        # Determina stato e network per admin
+        if self.trading_agent and is_admin:
             is_running = getattr(self.trading_agent, 'is_running', False)
             status_emoji = "🟢" if is_running else "🔴"
             status_text = "Attivo" if is_running else "Fermo"
@@ -133,45 +293,55 @@ class TradingTelegramBot:
             network = "N/A"
             tickers_str = "N/A"
 
-        welcome_msg = f"""🤖 <b>Trading Agent Bot</b>
+        # Messaggio di benvenuto personalizzato
+        user_name = user.first_name if user else "Utente"
+        admin_badge = " 👑" if is_admin else ""
 
-<b>Stato:</b> {status_emoji} {status_text}
-<b>Network:</b> {network}
-<b>Tickers:</b> {tickers_str}
+        welcome = f"""
+👋 Benvenuto **{user_name}**{admin_badge}!
 
-<b>Comandi disponibili:</b>
-/status - Stato bot e ciclo trading
-/balance - Saldo wallet corrente
-/positions - Posizioni aperte
-/today - Riepilogo giornaliero
-/config - Configurazione completa
-/stop - Ferma trading
-/resume - Riprendi trading
-/help - Lista comandi completa
+{DISCLAIMER}
+"""
 
-<i>Bot pronto per gestire il tuo trading! 🚀</i>"""
-
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📊 Status", callback_data="cmd:status"),
-                InlineKeyboardButton("💰 Balance", callback_data="cmd:balance"),
-                InlineKeyboardButton("📂 Posizioni", callback_data="cmd:positions"),
-            ],
-            [
-                InlineKeyboardButton("🧾 Today", callback_data="cmd:today"),
-                InlineKeyboardButton("🔢 Token", callback_data="cmd:tokens"),
-                InlineKeyboardButton("🪵 Log", callback_data="cmd:logs"),
-            ],
-            [
-                InlineKeyboardButton("🆘 Help", callback_data="cmd:help"),
-                InlineKeyboardButton("🛑 Stop", callback_data="cmd:stop"),
-                InlineKeyboardButton("▶️ Resume", callback_data="cmd:resume"),
-            ],
-        ])
+        # Keyboard diversa per admin e utenti pubblici
+        if is_admin:
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📊 Status", callback_data="cmd:status"),
+                    InlineKeyboardButton("💰 Balance", callback_data="cmd:balance"),
+                    InlineKeyboardButton("📂 Posizioni", callback_data="cmd:positions"),
+                ],
+                [
+                    InlineKeyboardButton("🧾 Today", callback_data="cmd:today"),
+                    InlineKeyboardButton("⚙️ Config", callback_data="cmd:config"),
+                    InlineKeyboardButton("🪵 Log", callback_data="cmd:logs"),
+                ],
+                [
+                    InlineKeyboardButton("🆘 Help", callback_data="cmd:help"),
+                    InlineKeyboardButton("🛑 Stop", callback_data="cmd:stop"),
+                    InlineKeyboardButton("▶️ Resume", callback_data="cmd:resume"),
+                ],
+            ])
+        else:
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📊 Stats", callback_data="cmd:stats"),
+                    InlineKeyboardButton("📈 Performance", callback_data="cmd:performance"),
+                    InlineKeyboardButton("💼 Posizioni", callback_data="cmd:positions"),
+                ],
+                [
+                    InlineKeyboardButton("🔔 Segnali", callback_data="cmd:last_signals"),
+                    InlineKeyboardButton("🤖 Status", callback_data="cmd:status"),
+                ],
+                [
+                    InlineKeyboardButton("ℹ️ About", callback_data="cmd:about"),
+                    InlineKeyboardButton("📖 Help", callback_data="cmd:help"),
+                ],
+            ])
 
         chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
         if chat_id:
-            await self._send_message(chat_id, welcome_msg, parse_mode="HTML", reply_markup=keyboard)
+            await self._send_message(chat_id, welcome, parse_mode="Markdown", reply_markup=keyboard)
 
     async def _get_recent_logs(self, lines: int = 20) -> str:
         """Legge le ultime N righe del log di sistema."""
@@ -193,14 +363,238 @@ class TradingTelegramBot:
             logger.error(f"Errore lettura log: {e}")
             return f"❌ Errore lettura log: {e}"
 
-    async def cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Messaggio persistente con log e bottone refresh."""
-        await self._log_command(update, "logs")
+    # ==================== PUBLIC COMMANDS ====================
 
-        if not self._is_authorized(update):
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
+    @public_command
+    async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """📊 Statistiche generali del bot"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "stats", is_admin)
+
+        try:
+            # Get basic stats from database
+            from db_utils import get_connection
+
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Count total trades
+                    cur.execute("SELECT COUNT(*) FROM bot_operations WHERE operation IN ('open', 'close')")
+                    total_trades = cur.fetchone()[0]
+
+                    # Count winning trades
+                    cur.execute("""
+                        SELECT COUNT(*) FROM bot_operations
+                        WHERE operation = 'close' AND pnl_usd > 0
+                    """)
+                    winning_trades = cur.fetchone()[0]
+
+                    # Get total PnL
+                    cur.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM bot_operations WHERE operation = 'close'")
+                    total_pnl = float(cur.fetchone()[0])
+
+                    # Get win rate
+                    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+
+                    # Get uptime (approximated from first trade to now)
+                    cur.execute("SELECT MIN(created_at) FROM bot_operations")
+                    first_trade = cur.fetchone()[0]
+                    uptime_days = (datetime.now(timezone.utc) - first_trade).days if first_trade else 0
+
+            # Get LLM costs
+            try:
+                tracker = get_token_tracker()
+                today_stats = tracker.get_daily_stats()
+                total_cost_today = today_stats.total_cost_usd
+            except:
+                total_cost_today = 0.0
+
+            pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+
+            msg = f"""📊 <b>STATISTICHE TRADING AGENT</b>
+
+<b>Performance Generale:</b>
+├ Trades Totali: {total_trades}
+├ Win Rate: {win_rate:.1f}%
+├ PnL Totale: {pnl_emoji} ${total_pnl:,.2f}
+└ Uptime: {uptime_days} giorni
+
+<b>Costi LLM (oggi):</b> ${total_cost_today:.4f}
+
+<i>Statistiche aggiornate in tempo reale</i>"""
+
+            await update.message.reply_text(msg, parse_mode="HTML")
+
+        except Exception as e:
+            logger.error(f"❌ Errore nel comando /stats: {e}")
+            await update.message.reply_text(f"❌ Errore nel recupero statistiche: {str(e)}")
+
+    @public_command
+    async def cmd_performance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """📈 Performance dell'agente (ultimi 7/30 giorni)"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "performance", is_admin)
+
+        try:
+            from db_utils import get_connection
+
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get performance for different periods
+                    periods = [
+                        (7, "7 giorni"),
+                        (30, "30 giorni")
+                    ]
+
+                    msg = "📈 <b>PERFORMANCE TRADING AGENT</b>\n\n"
+
+                    for days, label in periods:
+                        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+                        # Get trades in period
+                        cur.execute("""
+                            SELECT COUNT(*) FROM bot_operations
+                            WHERE operation = 'close' AND created_at >= %s
+                        """, (start_date,))
+                        trades_count = cur.fetchone()[0]
+
+                        # Get PnL in period
+                        cur.execute("""
+                            SELECT COALESCE(SUM(pnl_usd), 0) FROM bot_operations
+                            WHERE operation = 'close' AND created_at >= %s
+                        """, (start_date,))
+                        period_pnl = float(cur.fetchone()[0])
+
+                        # Get win rate for period
+                        cur.execute("""
+                            SELECT COUNT(*) FROM bot_operations
+                            WHERE operation = 'close' AND pnl_usd > 0 AND created_at >= %s
+                        """, (start_date,))
+                        winning_trades = cur.fetchone()[0]
+
+                        win_rate = (winning_trades / trades_count * 100) if trades_count > 0 else 0
+                        pnl_emoji = "🟢" if period_pnl >= 0 else "🔴"
+
+                        msg += f"<b>{label}:</b>\n"
+                        msg += f"├ Trades: {trades_count}\n"
+                        msg += f"├ Win Rate: {win_rate:.1f}%\n"
+                        msg += f"└ PnL: {pnl_emoji} ${period_pnl:,.2f}\n\n"
+
+                    # Get Sharpe ratio approximation (simplified)
+                    # This is a basic approximation - real Sharpe would need daily returns
+                    try:
+                        cur.execute("""
+                            SELECT AVG(pnl_usd), STDDEV(pnl_usd)
+                            FROM bot_operations
+                            WHERE operation = 'close' AND created_at >= %s
+                        """, (datetime.now(timezone.utc) - timedelta(days=30),))
+                        avg_pnl, std_pnl = cur.fetchone()
+
+                        if std_pnl and std_pnl > 0:
+                            sharpe_ratio = (float(avg_pnl) / float(std_pnl)) * (365**0.5)  # Annualized
+                            msg += f"<b>Risk Metrics (30g):</b>\n"
+                            msg += f"├ Sharpe Ratio: {sharpe_ratio:.2f}\n"
+                            msg += f"└ Volatilità giornaliera: ${std_pnl:.2f}\n\n"
+                    except:
+                        pass
+
+                    msg += "<i>Performance calcolata su trades chiusi</i>"
+
+            await update.message.reply_text(msg, parse_mode="HTML")
+
+        except Exception as e:
+            logger.error(f"❌ Errore nel comando /performance: {e}")
+            await update.message.reply_text(f"❌ Errore nel recupero performance: {str(e)}")
+
+    @public_command
+    async def cmd_last_signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """🔔 Ultimi segnali generati dall'AI (ultimi 5)"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "last_signals", is_admin)
+
+        try:
+            from db_utils import get_connection
+
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get last 5 signals/decisions
+                    cur.execute("""
+                        SELECT symbol, direction, decision_reason, confidence, created_at
+                        FROM ai_signals
+                        ORDER BY created_at DESC
+                        LIMIT 5
+                    """)
+                    signals = cur.fetchall()
+
+            if not signals:
+                await update.message.reply_text("📭 Nessun segnale AI trovato al momento.")
+                return
+
+            msg = "🔔 <b>ULTIMI SEGNALI AI</b>\n\n"
+
+            for i, signal in enumerate(signals, 1):
+                symbol, direction, reason, confidence, created_at = signal
+                time_str = created_at.strftime('%d/%m %H:%M')
+
+                direction_emoji = "🟢" if direction == 'long' else "🔴" if direction == 'short' else "⚪"
+                confidence_pct = confidence * 100 if confidence else 0
+
+                # Truncate reason if too long
+                short_reason = reason[:100] + "..." if reason and len(reason) > 100 else reason or "N/A"
+
+                msg += f"<b>{i}. {symbol} {direction_emoji}</b>\n"
+                msg += f"├ Ora: {time_str}\n"
+                msg += f"├ Confidenza: {confidence_pct:.1f}%\n"
+                msg += f"└ Motivo: {short_reason}\n\n"
+
+            msg += "<i>Segnali generati dall'AI decision engine</i>"
+
+            await update.message.reply_text(msg, parse_mode="HTML")
+
+        except Exception as e:
+            logger.error(f"❌ Errore nel comando /last_signals: {e}")
+            await update.message.reply_text(f"❌ Errore nel recupero segnali: {str(e)}")
+
+    @public_command
+    async def cmd_about(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """ℹ️ Info sul progetto"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "about", is_admin)
+
+        about = """
+🤖 **Trading Agent**
+
+Un progetto open source di trading AI-driven ispirato a Alpha Arena.
+
+**Features:**
+• Analisi multi-sorgente (market data, news, sentiment)
+• LLM-powered decision making
+• Multi-exchange support (Hyperliquid, Binance, etc.)
+• Advanced risk management
+
+**Stack:**
+• Backend: FastAPI + Python
+• AI: Multiple LLM providers
+• Database: PostgreSQL
+• Frontend: React
+
+🔗 Dashboard: https://trading-dashboard.up.railway.app/
+📚 Docs: [link]
+💻 GitHub: [link]
+"""
+        await update.message.reply_text(about, parse_mode="Markdown")
+
+    # ==================== ADMIN COMMANDS ====================
+
+    @admin_only
+    async def cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Messaggio persistente con log e bottone refresh (ADMIN ONLY)."""
+        await self._log_command(update, "logs", True)
+
+        if not self._is_authorized(update, require_admin=True):
             return
 
         text = await self._get_recent_logs()
@@ -227,20 +621,15 @@ class TradingTelegramBot:
             sent = await self.application.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
             self.logs_message_ids[chat_id] = sent.message_id
 
+    @public_command
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /status"""
-        await self._log_command(update, "status")
-
-        if not self._is_authorized(update):
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
-            return
+        """🤖 Status del sistema (trading attivo/paused, exchanges connessi)"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "status", is_admin)
 
         if not self.trading_agent:
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, "⚪ Trading Agent non connesso.")
+            await update.message.reply_text("⚪ Trading Agent non connesso.")
             return
 
         # Get status info
@@ -250,33 +639,35 @@ class TradingTelegramBot:
         cycle_interval = getattr(self.trading_agent, 'cycle_interval_minutes', 60)
 
         status_emoji = "🟢" if is_running else "🔴"
-        status_text = "ATTIVO" if is_running else "FERMO"
+        status_text = "ATTIVO" if is_running else "IN PAUSA"
 
         # Format times
         if last_cycle:
-            last_cycle_str = last_cycle.strftime("%H:%M:%S")
+            last_cycle_str = last_cycle.strftime("%H:%M:%S UTC")
         else:
             last_cycle_str = "Mai eseguito"
 
         if next_cycle:
-            next_cycle_str = next_cycle.strftime("%H:%M:%S")
+            next_cycle_str = next_cycle.strftime("%H:%M:%S UTC")
             time_until = (next_cycle - datetime.now(timezone.utc)).total_seconds()
             minutes_until = int(time_until / 60)
             next_cycle_str += f" (tra {minutes_until}m)"
         else:
             next_cycle_str = "N/A"
 
-        # Get today's token cost
-        try:
-            tracker = get_token_tracker()
-            today_stats = tracker.get_daily_stats()
-            cost_today = today_stats.total_cost_usd
-            cost_str = f"${cost_today:.4f}"
-        except Exception as e:
-            logger.error(f"Errore lettura costi token: {e}")
-            cost_str = "N/A"
+        # Show different info for admin vs public
+        if is_admin:
+            # Admin gets full info including costs
+            try:
+                tracker = get_token_tracker()
+                today_stats = tracker.get_daily_stats()
+                cost_today = today_stats.total_cost_usd
+                cost_str = f"${cost_today:.4f}"
+            except Exception as e:
+                logger.error(f"Errore lettura costi token: {e}")
+                cost_str = "N/A"
 
-        msg = f"""📊 <b>STATO TRADING ENGINE</b>
+            msg = f"""📊 <b>STATO TRADING ENGINE</b>
 
 <b>Stato:</b> {status_emoji} {status_text}
 <b>Ultimo ciclo:</b> {last_cycle_str}
@@ -286,34 +677,32 @@ class TradingTelegramBot:
 💰 <b>Costo LLM oggi:</b> {cost_str}
 
 <i>Il bot sta {('eseguendo' if is_running else 'aspettando')} il trading automatico.</i>"""
+        else:
+            # Public users get limited info
+            msg = f"""🤖 <b>STATO SISTEMA</b>
 
-        chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-        if chat_id:
-            await self._send_message(chat_id, msg, parse_mode="HTML")
+<b>Stato Trading:</b> {status_emoji} {status_text}
+<b>Ultimo ciclo:</b> {last_cycle_str}
+<b>Prossimo ciclo:</b> {next_cycle_str}
 
+<i>Il sistema sta {('eseguendo' if is_running else 'aspettando')} l'analisi di mercato.</i>"""
+
+        await update.message.reply_text(msg, parse_mode="HTML")
+
+    @admin_only
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /balance"""
-        await self._log_command(update, "balance")
-
-        if not self._is_authorized(update):
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, "❌ Non sei autorizzato a usare questo bot.")
-            return
+        """💰 Saldo wallet corrente (ADMIN ONLY)"""
+        await self._log_command(update, "balance", True)
 
         if not self.trading_agent:
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, "⚪ Trading Agent non connesso.")
+            await update.message.reply_text("⚪ Trading Agent non connesso.")
             return
 
         try:
             # Get balance from trading agent
             trader = getattr(self.trading_agent, 'trader', None)
             if not trader:
-                chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-                if chat_id:
-                    await self._send_message(chat_id, "⚠️ Trader non disponibile.")
+                await update.message.reply_text("⚠️ Trader non disponibile.")
                 return
 
             # Fetch current account state
@@ -340,23 +729,18 @@ class TradingTelegramBot:
 
 <i>Aggiornato al: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}</i>"""
 
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, msg, parse_mode="HTML")
+            await update.message.reply_text(msg, parse_mode="HTML")
 
         except Exception as e:
             logger.error(f"❌ Errore nel recupero balance: {e}")
-            chat_id = update.effective_chat.id if update.effective_chat else self.chat_id
-            if chat_id:
-                await self._send_message(chat_id, f"❌ Errore nel recupero del saldo: {str(e)}")
+            await update.message.reply_text(f"❌ Errore nel recupero del saldo: {str(e)}")
 
+    @public_command
     async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /positions"""
-        await self._log_command(update, "positions")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """💼 Posizioni aperte (senza dettagli sensibili come quantità esatte)"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "positions", is_admin)
 
         if not self.trading_agent:
             await update.message.reply_text("⚪ Trading Agent non connesso.")
@@ -376,33 +760,62 @@ class TradingTelegramBot:
                 await update.message.reply_text("📭 Nessuna posizione aperta al momento.")
                 return
 
-            msg = "<b>📈 POSIZIONI APERTE</b>\n\n"
+            msg = "<b>💼 POSIZIONI APERTE</b>\n\n"
 
-            total_pnl = 0.0
+            total_pnl_pct = 0.0
+            position_count = len(positions)
+
             for pos in positions:
                 symbol = pos.get('symbol', 'N/A')
                 side = pos.get('side', 'N/A')
-                size = pos.get('size', 0.0)
                 entry_price = pos.get('entry_price', 0.0)
                 mark_price = pos.get('mark_price', 0.0)
                 pnl_usd = pos.get('pnl_usd', 0.0)
-                leverage = pos.get('leverage', 'N/A')
 
-                total_pnl += pnl_usd
+                # Calculate PnL percentage
+                pnl_pct = (pnl_usd / (entry_price * pos.get('size', 1))) * 100 if entry_price > 0 else 0
+                total_pnl_pct += pnl_pct
+
+                # Duration (approximate)
+                created_at = pos.get('created_at')
+                if created_at:
+                    if isinstance(created_at, str):
+                        duration_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(created_at.replace('Z', '+00:00'))).total_seconds() / 3600
+                    else:
+                        duration_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                    duration_str = f"{duration_hours:.1f}h"
+                else:
+                    duration_str = "N/A"
 
                 side_emoji = "🟢" if side.lower() == 'long' else "🔴"
-                pnl_emoji = "🟢" if pnl_usd >= 0 else "🔴"
+                pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
 
-                msg += f"""{side_emoji} <b>{symbol}</b> - {side.upper()}
-Size: {size:.6f}
-Entry: ${entry_price:,.4f} | Mark: ${mark_price:,.4f}
-PnL: {pnl_emoji} ${pnl_usd:,.4f}
-Leverage: {leverage}
+                if is_admin:
+                    # Admin gets full details
+                    size = pos.get('size', 0.0)
+                    leverage = pos.get('leverage', 'N/A')
+                    msg += f"""{side_emoji} <b>{symbol}</b> - {side.upper()}
+├ Size: {size:.6f}
+├ Entry: ${entry_price:,.4f} | Mark: ${mark_price:,.4f}
+├ PnL: {pnl_emoji} ${pnl_usd:,.4f} ({pnl_pct:+.2f}%)
+├ Leverage: {leverage}
+└ Durata: {duration_str}
+
+"""
+                else:
+                    # Public users get limited info
+                    msg += f"""{side_emoji} <b>{symbol}</b> - {side.upper()}
+├ Prezzo entrata: ${entry_price:,.2f}
+├ PnL: {pnl_emoji} {pnl_pct:+.2f}%
+└ Durata: {duration_str}
 
 """
 
-            total_emoji = "🟢" if total_pnl >= 0 else "🔴"
-            msg += f"<b>PnL Totale:</b> {total_emoji} ${total_pnl:,.4f}"
+            if is_admin:
+                total_emoji = "🟢" if total_pnl_pct >= 0 else "🔴"
+                msg += f"<b>PnL Totale:</b> {total_emoji} {total_pnl_pct:+.2f}%"
+            else:
+                msg += f"<b>Totale posizioni:</b> {position_count}"
 
             await update.message.reply_text(msg, parse_mode="HTML")
 
@@ -410,13 +823,10 @@ Leverage: {leverage}
             logger.error(f"❌ Errore nel recupero posizioni: {e}")
             await update.message.reply_text(f"❌ Errore nel recupero delle posizioni: {str(e)}")
 
+    @admin_only
     async def cmd_today(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /today - riepilogo giornaliero"""
-        await self._log_command(update, "today")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """📊 Riepilogo giornaliero (ADMIN ONLY)"""
+        await self._log_command(update, "today", True)
 
         if not self.trading_agent:
             await update.message.reply_text("⚪ Trading Agent non connesso.")
@@ -493,13 +903,10 @@ Leverage: {leverage}
             logger.error(f"❌ Errore nel recupero riepilogo giornaliero: {e}")
             await update.message.reply_text(f"❌ Errore nel recupero del riepilogo: {str(e)}")
 
+    @admin_only
     async def cmd_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /config"""
-        await self._log_command(update, "config")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """⚙️ Configurazione completa (ADMIN ONLY)"""
+        await self._log_command(update, "config", True)
 
         if not self.trading_agent:
             await update.message.reply_text("⚪ Trading Agent non connesso.")
@@ -534,13 +941,10 @@ Leverage: {leverage}
 
         await update.message.reply_text(msg, parse_mode="HTML")
 
+    @admin_only
     async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /stop - ferma il trading"""
-        await self._log_command(update, "stop")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """⏯️ Ferma trading automatico (ADMIN ONLY)"""
+        await self._log_command(update, "stop", True)
 
         if not self.trading_agent:
             await update.message.reply_text("⚪ Trading Agent non connesso.")
@@ -562,13 +966,10 @@ Leverage: {leverage}
             reply_markup=reply_markup
         )
 
+    @admin_only
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /resume - riprende il trading"""
-        await self._log_command(update, "resume")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """▶️ Riprendi trading automatico (ADMIN ONLY)"""
+        await self._log_command(update, "resume", True)
 
         if not self.trading_agent:
             await update.message.reply_text("⚪ Trading Agent non connesso.")
@@ -588,45 +989,66 @@ Leverage: {leverage}
             logger.error(f"❌ Errore nel resume trading: {e}")
             await update.message.reply_text(f"❌ Errore: {str(e)}")
 
+    @public_command
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /help"""
-        await self._log_command(update, "help")
+        """📖 Guida comandi disponibili"""
+        user = update.effective_user
+        is_admin = user.id in ADMIN_IDS if user else False
+        await self._log_command(update, "help", is_admin)
 
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        if is_admin:
+            help_msg = """📖 <b>COMANDI DISPONIBILI</b>
 
-        help_msg = """📖 <b>COMANDI DISPONIBILI</b>
+<b>📊 Informazioni:</b>
+/stats - Statistiche generali
+/performance - Performance storica
+/positions - Posizioni aperte (dettagliate)
+/last_signals - Ultimi segnali AI
+/status - Stato sistema
+/tokens - Consumo token LLM
+/config - Configurazione completa
 
-<b>/start</b> - Welcome message e info bot
-<b>/status</b> - Stato trading engine e costi
-<b>/balance</b> - Saldo wallet Hyperliquid
-<b>/positions</b> - Posizioni aperte con PnL
-<b>/today</b> - Riepilogo giornaliero
-<b>/tokens</b> - Consumo token LLM e costi
-<b>/config</b> - Configurazione attuale
-<b>/stop</b> - Ferma il trading automatico
-<b>/resume</b> - Riprendi il trading
-<b>/help</b> - Mostra questo messaggio
+<b>⚙️ Controllo Trading:</b>
+/balance - Saldo wallet
+/today - Riepilogo giornaliero
+/stop - Ferma trading
+/resume - Riprendi trading
 
-<b>Notifiche Automatiche:</b>
-Il bot invierà notifiche per:
-• Apertura/chiusura trades
-• Errori critici
-• Circuit breaker attivato
-• Riepilogo giornaliero
+<b>🔧 Admin:</b>
+/logs - System logs
+/admin_help - Comandi admin
 
-<i>Per supporto: @yourname</i>"""
+<b>ℹ️ Altro:</b>
+/about - Info progetto
+/help - Questa guida
+
+<i>👑 Accesso amministratore abilitato</i>"""
+        else:
+            help_msg = """📖 <b>COMANDI DISPONIBILI</b>
+
+<b>📊 Informazioni:</b>
+/stats - Statistiche generali
+/performance - Performance storica
+/positions - Posizioni aperte
+/last_signals - Ultimi segnali AI
+/status - Stato sistema
+
+<b>ℹ️ Altro:</b>
+/about - Info progetto
+/help - Questa guida
+
+<b>⚠️ Disclaimer:</b>
+Questo bot fornisce solo informazioni generali sul sistema di trading.
+Non costituisce consulenza finanziaria. DYOR.
+
+<i>Usa /start per il disclaimer completo</i>"""
 
         await update.message.reply_text(help_msg, parse_mode="HTML")
 
+    @admin_only
     async def cmd_tokens(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler per comando /tokens - statistiche consumo token LLM"""
-        await self._log_command(update, "tokens")
-
-        if not self._is_authorized(update):
-            await update.message.reply_text("❌ Non sei autorizzato a usare questo bot.")
-            return
+        """🔢 Consumo token LLM e costi (ADMIN ONLY)"""
+        await self._log_command(update, "tokens", True)
 
         try:
             tracker = get_token_tracker()
@@ -681,6 +1103,36 @@ Il bot invierà notifiche per:
         except Exception as e:
             logger.error(f"❌ Errore nel comando /tokens: {e}")
             await update.message.reply_text(f"❌ Errore nel recupero statistiche token: {str(e)}")
+
+    @admin_only
+    async def cmd_admin_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """📋 Comandi amministratore"""
+        await self._log_command(update, "admin_help", True)
+
+        admin_help = """
+🔧 **Comandi Admin**
+
+<b>💰 Trading & Finanza:</b>
+/balance - Saldo wallet dettagliato
+/today - Riepilogo giornaliero completo
+/tokens - Consumo token LLM e costi
+
+<b>⚙️ Sistema & Config:</b>
+/config - Configurazione completa
+/logs - System logs in tempo reale
+/status - Stato sistema dettagliato
+
+<b>⏯️ Controllo Trading:</b>
+/stop - Ferma trading automatico
+/resume - Riprendi trading automatico
+
+<b>ℹ️ Info:</b>
+/admin_help - Questa guida
+/help - Comandi pubblici + admin
+
+<i>👑 Accesso amministratore richiesto per tutti questi comandi</i>
+"""
+        await update.message.reply_text(admin_help, parse_mode="HTML")
 
     # ==================== CALLBACK HANDLERS ====================
 
@@ -829,17 +1281,25 @@ Trading fermato automaticamente per protezione del capitale."""
             self.application = Application.builder().token(self.token).build()
 
             # Add command handlers
+            # Public commands
             self.application.add_handler(CommandHandler("start", self.cmd_start))
-            self.application.add_handler(CommandHandler("status", self.cmd_status))
-            self.application.add_handler(CommandHandler("balance", self.cmd_balance))
+            self.application.add_handler(CommandHandler("help", self.cmd_help))
+            self.application.add_handler(CommandHandler("about", self.cmd_about))
+            self.application.add_handler(CommandHandler("stats", self.cmd_stats))
+            self.application.add_handler(CommandHandler("performance", self.cmd_performance))
             self.application.add_handler(CommandHandler("positions", self.cmd_positions))
+            self.application.add_handler(CommandHandler("last_signals", self.cmd_last_signals))
+            self.application.add_handler(CommandHandler("status", self.cmd_status))
+
+            # Admin commands
+            self.application.add_handler(CommandHandler("balance", self.cmd_balance))
             self.application.add_handler(CommandHandler("today", self.cmd_today))
             self.application.add_handler(CommandHandler("config", self.cmd_config))
             self.application.add_handler(CommandHandler("tokens", self.cmd_tokens))
             self.application.add_handler(CommandHandler("logs", self.cmd_logs))
             self.application.add_handler(CommandHandler("stop", self.cmd_stop))
             self.application.add_handler(CommandHandler("resume", self.cmd_resume))
-            self.application.add_handler(CommandHandler("help", self.cmd_help))
+            self.application.add_handler(CommandHandler("admin_help", self.cmd_admin_help))
 
             # Add callback handler
             self.application.add_handler(CallbackQueryHandler(self.callback_handler))
