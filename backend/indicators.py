@@ -348,7 +348,7 @@ class CryptoTechnicalAnalysisHL:
             f"RSI indicators (14-Period): {[round(x, 3) for x in intra['rsi_14']]}\n\n"
         )
 
-        lt = data["longer_term_15m"]
+        lt = data["longer_term"]
         output += "Longer-term context (still 15-minute timeframe, wider window):\n"
         output += (
             f"20-Period EMA: {lt['ema_20_current']:.3f} vs. "

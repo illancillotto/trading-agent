@@ -729,6 +729,21 @@ def trading_cycle() -> None:
 
         logger.info(f"💰 Balance: ${balance_usd:.2f}, Posizioni aperte: {len(open_positions)}")
 
+        # ========================================
+        # CALCOLO PERFORMANCE METRICS (SHARED)
+        # ========================================
+        # Calculate ONCE and reuse in both MANAGE and SCOUT phases
+        try:
+            perf_calculator = get_performance_calculator(db_utils)
+            perf_metrics = perf_calculator.get_metrics_from_db(lookback_days=30)
+            performance_section = perf_metrics.to_prompt_string() if perf_metrics.total_trades > 0 else """**Your Performance Metrics:**
+- No completed trades yet. Focus on quality over quantity.
+- Start with conservative position sizes until you build a track record."""
+            logger.info(f"✅ Performance metrics calculated (trades: {perf_metrics.total_trades if perf_metrics else 0})")
+        except Exception as e:
+            logger.warning(f"⚠️ Error calculating performance metrics: {e}")
+            performance_section = "**Your Performance Metrics:** (unavailable - system starting)"
+
         # --- FIX: SYNC STATO REALE ---
         # Filtra tickers_manage per includere SOLO le posizioni realmente aperte.
         # Questo evita chiamate inutili all'AI se il trade è stato chiuso altrove o per stop-loss.
@@ -867,17 +882,6 @@ Daily P&L: ${risk_manager.daily_pnl:.2f}
 Consecutive Losses: {risk_manager.consecutive_losses}
 </risk_status>
 """
-            # Calculate performance metrics (NOF1.ai)
-            try:
-                perf_calculator = get_performance_calculator(db_utils)
-                perf_metrics = perf_calculator.get_metrics_from_db(lookback_days=30)
-                performance_section = perf_metrics.to_prompt_string() if perf_metrics.total_trades > 0 else """**Your Performance Metrics:**
-- No completed trades yet. Focus on quality over quantity.
-- Start with conservative position sizes until you build a track record."""
-            except Exception as e:
-                logger.warning(f"⚠️ Error calculating performance metrics: {e}")
-                performance_section = "**Your Performance Metrics:** (unavailable - system starting)"
-
             # Load system prompt template
             with open('system_prompt.txt', 'r') as f:
                 system_prompt_template = f.read()
