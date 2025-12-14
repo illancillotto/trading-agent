@@ -412,10 +412,21 @@ class HyperliquidForecaster:
                 try:
                     forecast_data, last_price = self.forecast(coin, interval)
                     fc = forecast_data.iloc[0]
-                    
+
                     # Calcola la variazione percentuale
                     variazione_pct = ((fc["yhat"] - last_price) / last_price) * 100
-                    
+
+                    # Sanitize NaN/Inf values
+                    import math
+                    forecast_price = fc["yhat"]
+                    if not math.isfinite(forecast_price):
+                        warnings.warn(f"⚠️ Invalid forecast for {coin} {interval}, using last price")
+                        forecast_price = last_price
+                        variazione_pct = 0.0
+
+                    if not math.isfinite(variazione_pct):
+                        variazione_pct = 0.0
+
                     # Determina il timeframe in italiano
                     if interval == "5m":
                         timeframe = "Prossimi 5 Minuti"
@@ -423,15 +434,15 @@ class HyperliquidForecaster:
                         timeframe = "Prossimi 15 Minuti"
                     else:
                         timeframe = "Prossima Ora"
-                    
+
                     results.append({
                         "Ticker": coin,
                         "Timeframe": timeframe,
-                        "Ultimo Prezzo": round(last_price, 2),
-                        "Previsione": round(fc["yhat"], 2),
-                        "Limite Inferiore": round(fc["yhat_lower"], 2),
-                        "Limite Superiore": round(fc["yhat_upper"], 2),
-                        "Variazione %": round(variazione_pct, 2),
+                        "Ultimo Prezzo": round(float(last_price), 2),
+                        "Previsione": round(float(forecast_price), 2),
+                        "Limite Inferiore": round(float(fc["yhat_lower"]), 2) if math.isfinite(fc["yhat_lower"]) else round(float(last_price), 2),
+                        "Limite Superiore": round(float(fc["yhat_upper"]), 2) if math.isfinite(fc["yhat_upper"]) else round(float(last_price), 2),
+                        "Variazione %": round(float(variazione_pct), 2),
                         "Timestamp Previsione": fc["ds"]
                     })
                 except Exception as e:

@@ -15,6 +15,25 @@ from ..models import CoinMetrics
 
 logger = logging.getLogger(__name__)
 
+# Import rate limiter from hyperliquid_trader
+import sys
+import os
+backend_path = os.path.join(os.path.dirname(__file__), "../../..")
+if backend_path not in sys.path:
+    sys.path.insert(0, backend_path)
+try:
+    from hyperliquid_trader import with_rate_limit_and_retry
+    RATE_LIMITER_AVAILABLE = True
+    logger.info("✅ Rate limiter imported successfully for CoinScreener")
+except ImportError as e:
+    logger.warning(f"⚠️ Could not import rate limiter: {e}")
+    RATE_LIMITER_AVAILABLE = False
+    # Fallback decorator that does nothing
+    def with_rate_limit_and_retry(endpoint="default", max_retries=3, backoff_factor=2.0):
+        def decorator(func):
+            return func
+        return decorator
+
 
 from hyperliquid.utils.error import ClientError
 import time
@@ -87,10 +106,25 @@ class HyperliquidDataProvider:
                 raise
         return None
 
+    @with_rate_limit_and_retry(endpoint="all_mids", max_retries=2)
+    def _call_all_mids(self):
+        """Rate-limited call to all_mids"""
+        return self.info.all_mids()
+
+    @with_rate_limit_and_retry(endpoint="meta", max_retries=2)
+    def _call_meta(self):
+        """Rate-limited call to meta"""
+        return self.info.meta()
+
+    @with_rate_limit_and_retry(endpoint="candles", max_retries=2)
+    def _call_candles_snapshot(self, **kwargs):
+        """Rate-limited call to candles_snapshot"""
+        return self.info.candles_snapshot(**kwargs)
+
     def get_all_prices(self) -> Dict[str, float]:
         """Fetch current prices for all symbols once."""
         try:
-            mids = self._retry_api_call(self.info.all_mids)
+            mids = self._call_all_mids()
             return {k: float(v) for k, v in mids.items()}
         except Exception as e:
             logger.error(f"Error fetching all prices: {e}")
@@ -104,8 +138,8 @@ class HyperliquidDataProvider:
             List of symbol strings (e.g., ['BTC', 'ETH', 'SOL'])
         """
         try:
-            # Fetch metadata from Hyperliquid
-            meta = self._retry_api_call(self.info.meta)
+            # Fetch metadata from Hyperliquid with rate limiting
+            meta = self._call_meta()
             all_universe_symbols = {asset['name'] for asset in meta['universe']}
 
             logger.info(f"📊 Hyperliquid {'testnet' if self.testnet else 'mainnet'} ha {len(all_universe_symbols)} coin disponibili")
@@ -336,8 +370,7 @@ class HyperliquidDataProvider:
             step_ms = interval_to_ms[interval]
             start_ms = now_ms - limit * step_ms
 
-            ohlcv_data = self._retry_api_call(
-                self.info.candles_snapshot,
+            ohlcv_data = self._call_candles_snapshot(
                 name=symbol,
                 interval=interval,
                 startTime=start_ms,

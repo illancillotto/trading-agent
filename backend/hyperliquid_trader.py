@@ -1,8 +1,11 @@
 import json
 import logging
 import time
+import os
 from decimal import Decimal, ROUND_DOWN
-from typing import Dict, Any
+from typing import Dict, Any, Callable
+from functools import wraps
+from threading import Lock
 
 import eth_account
 from eth_account.signers.local import LocalAccount
@@ -14,6 +17,114 @@ from hyperliquid.utils.error import ClientError
 from hyperliquid_utils import init_info_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# RATE LIMITER FOR HYPERLIQUID API
+# =====================================================================
+
+class HyperLiquidRateLimiter:
+    """
+    Rate limiter conservativo per HyperLiquid Testnet.
+
+    Mainnet limits: 1200 req/min (Info), 600 req/min (Exchange)
+    Testnet limits: UNKNOWN - assumiamo 60 req/min (1 req/sec) per sicurezza
+    """
+    def __init__(self, requests_per_minute: int = 60):
+        self.requests_per_minute = requests_per_minute
+        self.min_interval = 60.0 / requests_per_minute  # Secondi tra richieste
+        self.last_call_time = {}  # Per endpoint
+        self.lock = Lock()
+        logger.info(f"🚦 Rate Limiter initialized: {requests_per_minute} req/min ({self.min_interval:.2f}s interval)")
+
+    def wait_if_needed(self, endpoint: str = "default"):
+        """Aspetta se necessario per rispettare il rate limit"""
+        with self.lock:
+            now = time.time()
+            last_call = self.last_call_time.get(endpoint, 0)
+            time_since_last_call = now - last_call
+
+            if time_since_last_call < self.min_interval:
+                sleep_time = self.min_interval - time_since_last_call
+                logger.debug(f"⏱️ Rate limit [{endpoint}]: sleeping {sleep_time:.2f}s")
+                time.sleep(sleep_time)
+
+            self.last_call_time[endpoint] = time.time()
+
+
+# Determina rate limit in base a testnet/mainnet
+_is_testnet = os.getenv("TESTNET", "true").lower() == "true"
+_rate_limit = int(os.getenv(
+    "HYPERLIQUID_TESTNET_RATE_LIMIT" if _is_testnet else "HYPERLIQUID_MAINNET_RATE_LIMIT",
+    30 if _is_testnet else 1200  # ULTRA-conservativo: 30 req/min = 2s tra richieste
+))
+
+# Rate limiter globale - CONSERVATIVO per testnet
+_rate_limiter = HyperLiquidRateLimiter(requests_per_minute=_rate_limit)
+
+
+def with_rate_limit_and_retry(
+    endpoint: str = "default",
+    max_retries: int = 3,
+    backoff_factor: float = 2.0
+):
+    """
+    Decorator per rate limiting + retry con exponential backoff.
+
+    Args:
+        endpoint: Nome endpoint per tracking separato
+        max_retries: Numero massimo di tentativi (default: 3)
+        backoff_factor: Moltiplicatore per backoff (default: 2.0 = raddoppia)
+
+    Backoff sequence: 1s, 2s, 4s, 8s, ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            for attempt in range(max_retries):
+                try:
+                    # Rate limiting PRIMA della chiamata
+                    _rate_limiter.wait_if_needed(endpoint)
+
+                    # Esegui la chiamata API
+                    return func(*args, **kwargs)
+
+                except Exception as e:
+                    # Verifica se è un errore 429 (rate limit)
+                    error_str = str(e)
+                    error_args = e.args[0] if e.args else None
+                    is_rate_limit = (
+                        '429' in error_str or
+                        'rate limit' in error_str.lower() or
+                        'too many requests' in error_str.lower() or
+                        (isinstance(error_args, tuple) and len(error_args) > 0 and error_args[0] == 429)
+                    )
+
+                    if is_rate_limit:
+                        if attempt < max_retries - 1:
+                            # Exponential backoff: backoff_factor^attempt secondi
+                            wait_time = backoff_factor ** attempt
+                            logger.warning(
+                                f"⚠️ Rate limit 429 on {func.__name__} [{endpoint}], "
+                                f"retry {attempt + 1}/{max_retries} after {wait_time:.1f}s"
+                            )
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            # Ultimo tentativo fallito
+                            logger.error(
+                                f"❌ Rate limit persists after {max_retries} retries on {func.__name__}"
+                            )
+                            raise
+                    else:
+                        # Non è un rate limit, rilancia subito
+                        raise
+
+            # Non dovrebbe mai arrivare qui
+            raise Exception(f"Max retries exceeded for {func.__name__}")
+
+        return wrapper
+    return decorator
 
 
 class HyperLiquidTrader:
@@ -306,7 +417,7 @@ class HyperLiquidTrader:
         print(f"📊 Leva attuale per {symbol}: {current_leverage_info}")
 
         # Ora procedi con l'apertura della posizione
-        user = self.info.user_state(self.master_account_address)
+        user = self._get_user_state()
         balance_usd = Decimal(str(user["marginSummary"]["accountValue"]))
 
         if balance_usd <= 0:
@@ -314,7 +425,7 @@ class HyperLiquidTrader:
 
         notional = balance_usd * portion * Decimal(str(leverage))
 
-        mids = self.info.all_mids()
+        mids = self._get_all_mids()
         if symbol not in mids:
             raise RuntimeError(f"Symbol {symbol} non presente su HL")
 
@@ -397,46 +508,36 @@ class HyperLiquidTrader:
     # ----------------------------------------------------------------------
     #                           STATO ACCOUNT
     # ----------------------------------------------------------------------
+    @with_rate_limit_and_retry(endpoint="user_state", max_retries=3)
+    def _get_user_state(self):
+        """Internal method to get user state with rate limiting"""
+        return self.info.user_state(self.master_account_address)
+
+    @with_rate_limit_and_retry(endpoint="spot_user_state", max_retries=2)
+    def _get_spot_user_state(self):
+        """Internal method to get spot user state with rate limiting"""
+        return self.info.spot_user_state(self.master_account_address)
+
+    @with_rate_limit_and_retry(endpoint="all_mids", max_retries=3)
+    def _get_all_mids(self):
+        """Internal method to get all mid prices with rate limiting"""
+        return self.info.all_mids()
+
+    @with_rate_limit_and_retry(endpoint="meta", max_retries=2)
+    def _get_meta(self):
+        """Internal method to get meta data with rate limiting"""
+        return self.info.meta()
+
     def get_account_status(self) -> Dict[str, Any]:
         """
         Ottiene lo stato dell'account Hyperliquid.
         Include sia Perps che Spot account.
-        
+
         Returns:
             Dict con balance_usd (total equity), perps_balance, spot_balance e open_positions
         """
-        import time
-        from hyperliquid.utils.error import ClientError
-
-        max_retries = 5
-        retry_delay = 3  # seconds
-
-        data = {}
-        
-        # Retry logic per user_state (Perps)
-        for attempt in range(max_retries):
-            try:
-                # Usa master_account_address per le chiamate di lettura (Info)
-                # Il master account è quello che contiene i fondi
-                data = self.info.user_state(self.master_account_address)
-                break # Success
-            except ClientError as e:
-                error_args = e.args[0] if e.args else None
-                # Check for 429 Too Many Requests
-                if isinstance(error_args, tuple) and len(error_args) > 0 and error_args[0] == 429:
-                    if attempt < max_retries - 1:
-                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff: 3, 6, 12, 24, 48s
-                        print(f"⚠️ Rate limit (429) su user_state, retry in {wait_time}s...")
-                        time.sleep(wait_time)
-                        continue
-                print(f"❌ Errore recupero user_state: {e}")
-                raise
-            except Exception as e:
-                print(f"❌ Errore recupero user_state: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                raise
+        # Usa helper methods con rate limiting incorporato
+        data = self._get_user_state()
         
         # Estrai balance da marginSummary (Perps Account)
         margin_summary = data.get("marginSummary", {})
@@ -449,7 +550,7 @@ class HyperLiquidTrader:
         # Prova a recuperare saldi Spot direttamente
         spot_balance = 0.0
         try:
-            spot_state = self.info.spot_user_state(self.master_account_address)
+            spot_state = self._get_spot_user_state()
             if isinstance(spot_state, dict) and "balances" in spot_state:
                 # Calcola il totale dei saldi Spot
                 for balance_item in spot_state.get("balances", []):
@@ -461,6 +562,7 @@ class HyperLiquidTrader:
                             spot_balance += float(total)
         except Exception as e:
             # Se spot_user_state fallisce, continua senza Spot balance
+            logger.debug(f"Spot balance not available: {e}")
             pass
         
         # Se total_equity è 0, prova a sommare Perps + Spot
@@ -495,7 +597,7 @@ class HyperLiquidTrader:
             if "testnet" in self.base_url:
                 print(f"      Verifica sul sito: https://app.hyperliquid-testnet.xyz/portfolio")
 
-        mids = self.info.all_mids()
+        mids = self._get_all_mids()
         positions = []
 
         # Gestisci il formato corretto dei dati
@@ -895,7 +997,7 @@ class HyperLiquidTrader:
         if symbols is None:
             symbols = ["BTC", "ETH", "SOL"]
 
-        mids = self.info.all_mids()
+        mids = self._get_all_mids()
 
         return {
             symbol: float(mids.get(symbol, 0))
