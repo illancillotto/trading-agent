@@ -270,7 +270,7 @@ class BotState:
 
                 # Log available coins
                 try:
-                    available_coins = self.screener.data_provider.get_available_symbols()
+                    available_coins = self.screener.hl_provider.get_available_symbols()
                     logger.info(f"🎯 Trading coins for {'TESTNET' if CONFIG['TESTNET'] else 'MAINNET'}: {available_coins}")
                 except Exception as e:
                     logger.warning(f"⚠️ Impossibile recuperare coin disponibili: {e}")

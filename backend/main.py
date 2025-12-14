@@ -1879,6 +1879,186 @@ def on_shutdown():
     # TODO: Cleanup services
 
 
+# =====================
+# Prometheus Metrics Endpoint
+# =====================
+
+@app.get("/api/metrics")
+async def get_metrics(format: str = Query("json", description="Output format: json or prometheus")):
+    """
+    Restituisce metriche di sistema per monitoring (Prometheus/Grafana).
+
+    Args:
+        format: 'json' (default) o 'prometheus' (text format)
+
+    Returns:
+        Metriche in formato JSON o Prometheus text-based
+    """
+    try:
+        # Recupera dati da database
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Latest account snapshot
+                cur.execute("""
+                    SELECT balance_usd, created_at
+                    FROM account_snapshots
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                account_row = cur.fetchone()
+
+                # Open positions count from latest snapshot
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM open_positions op
+                    WHERE op.snapshot_id = (
+                        SELECT id FROM account_snapshots
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                """)
+                positions_count = cur.fetchone()[0] if cur.rowcount > 0 else 0
+
+                # Trade statistics (last 24 hours)
+                cur.execute("""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        COUNT(*) FILTER (WHERE pnl_usd > 0) as winning_trades,
+                        COUNT(*) FILTER (WHERE pnl_usd < 0) as losing_trades,
+                        COALESCE(SUM(pnl_usd), 0) as total_pnl_24h,
+                        COALESCE(AVG(pnl_usd), 0) as avg_pnl
+                    FROM executed_trades
+                    WHERE status = 'closed'
+                        AND created_at >= NOW() - INTERVAL '24 hours'
+                """)
+                trade_stats = cur.fetchone()
+
+                # Recent bot operations (last hour)
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM bot_operations
+                    WHERE created_at >= NOW() - INTERVAL '1 hour'
+                """)
+                recent_operations = cur.fetchone()[0]
+
+        # Parse data
+        current_balance = float(account_row[0]) if account_row and account_row[0] else 0.0
+        balance_timestamp = account_row[1] if account_row else None
+
+        total_trades = trade_stats[0] if trade_stats else 0
+        winning_trades = trade_stats[1] if trade_stats else 0
+        losing_trades = trade_stats[2] if trade_stats else 0
+        total_pnl_24h = float(trade_stats[3]) if trade_stats else 0.0
+        avg_pnl = float(trade_stats[4]) if trade_stats else 0.0
+        win_rate_24h = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+
+        # System info
+        from trading_engine import CONFIG
+        testnet_mode = CONFIG.get("TESTNET", True)
+        bot_enabled = TRADING_BOT_ENABLED
+
+        # Build metrics dict
+        metrics = {
+            "trading_bot_enabled": 1 if bot_enabled else 0,
+            "trading_testnet_mode": 1 if testnet_mode else 0,
+            "account_balance_usd": current_balance,
+            "open_positions_count": positions_count,
+            "trades_total_24h": total_trades,
+            "trades_winning_24h": winning_trades,
+            "trades_losing_24h": losing_trades,
+            "trades_win_rate_24h": win_rate_24h,
+            "pnl_total_24h_usd": total_pnl_24h,
+            "pnl_avg_24h_usd": avg_pnl,
+            "bot_operations_1h": recent_operations,
+            "system_health": 1  # 1 = healthy, 0 = unhealthy
+        }
+
+        # Return based on format
+        if format.lower() == "prometheus":
+            # Prometheus text-based format
+            lines = []
+            lines.append("# HELP trading_bot_enabled Whether the trading bot is enabled (1) or disabled (0)")
+            lines.append("# TYPE trading_bot_enabled gauge")
+            lines.append(f"trading_bot_enabled {metrics['trading_bot_enabled']}")
+            lines.append("")
+
+            lines.append("# HELP trading_testnet_mode Whether running in testnet (1) or mainnet (0)")
+            lines.append("# TYPE trading_testnet_mode gauge")
+            lines.append(f"trading_testnet_mode {metrics['trading_testnet_mode']}")
+            lines.append("")
+
+            lines.append("# HELP account_balance_usd Current account balance in USD")
+            lines.append("# TYPE account_balance_usd gauge")
+            lines.append(f"account_balance_usd {metrics['account_balance_usd']}")
+            lines.append("")
+
+            lines.append("# HELP open_positions_count Number of currently open positions")
+            lines.append("# TYPE open_positions_count gauge")
+            lines.append(f"open_positions_count {metrics['open_positions_count']}")
+            lines.append("")
+
+            lines.append("# HELP trades_total_24h Total number of trades in last 24 hours")
+            lines.append("# TYPE trades_total_24h counter")
+            lines.append(f"trades_total_24h {metrics['trades_total_24h']}")
+            lines.append("")
+
+            lines.append("# HELP trades_winning_24h Number of winning trades in last 24 hours")
+            lines.append("# TYPE trades_winning_24h counter")
+            lines.append(f"trades_winning_24h {metrics['trades_winning_24h']}")
+            lines.append("")
+
+            lines.append("# HELP trades_losing_24h Number of losing trades in last 24 hours")
+            lines.append("# TYPE trades_losing_24h counter")
+            lines.append(f"trades_losing_24h {metrics['trades_losing_24h']}")
+            lines.append("")
+
+            lines.append("# HELP trades_win_rate_24h Win rate percentage in last 24 hours")
+            lines.append("# TYPE trades_win_rate_24h gauge")
+            lines.append(f"trades_win_rate_24h {metrics['trades_win_rate_24h']}")
+            lines.append("")
+
+            lines.append("# HELP pnl_total_24h_usd Total PnL in USD in last 24 hours")
+            lines.append("# TYPE pnl_total_24h_usd gauge")
+            lines.append(f"pnl_total_24h_usd {metrics['pnl_total_24h_usd']}")
+            lines.append("")
+
+            lines.append("# HELP pnl_avg_24h_usd Average PnL per trade in USD in last 24 hours")
+            lines.append("# TYPE pnl_avg_24h_usd gauge")
+            lines.append(f"pnl_avg_24h_usd {metrics['pnl_avg_24h_usd']}")
+            lines.append("")
+
+            lines.append("# HELP bot_operations_1h Number of bot operations in last hour")
+            lines.append("# TYPE bot_operations_1h counter")
+            lines.append(f"bot_operations_1h {metrics['bot_operations_1h']}")
+            lines.append("")
+
+            lines.append("# HELP system_health System health status (1=healthy, 0=unhealthy)")
+            lines.append("# TYPE system_health gauge")
+            lines.append(f"system_health {metrics['system_health']}")
+
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content="\n".join(lines), media_type="text/plain; version=0.0.4")
+        else:
+            # JSON format
+            return {
+                "status": "healthy" if metrics["system_health"] == 1 else "unhealthy",
+                "timestamp": datetime.now().isoformat(),
+                "metrics": metrics
+            }
+
+    except Exception as e:
+        logger.error(f"Error generating metrics: {e}", exc_info=True)
+        if format.lower() == "prometheus":
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(
+                content="# Error generating metrics\nsystem_health 0\n",
+                media_type="text/plain; version=0.0.4",
+                status_code=500
+            )
+        else:
+            raise HTTPException(status_code=500, detail=f"Metrics generation failed: {str(e)}")
+
+
 # Serve frontend index.html for root and SPA routes
 @app.get("/")
 async def serve_root():

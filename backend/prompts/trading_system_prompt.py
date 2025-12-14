@@ -1299,9 +1299,30 @@ prices = [100, 102, 105, 103, 107]
 
         if trend_preanalysis:
             prompt += f"""
-## TREND CONFIRMATION ANALYSIS
+## TREND CONFIRMATION ANALYSIS ⚠️ PRE-QUALIFIED CANDIDATES ⚠️
+
+The following candidates have ALREADY PASSED rigorous trend confirmation checks.
+These are NOT suggestions - they are QUALIFIED opportunities ready for execution.
 
 {trend_preanalysis}
+
+**IMPORTANT INSTRUCTIONS FOR PRE-QUALIFIED CANDIDATES:**
+1. **These candidates have 85-95% trend confirmation** - DO NOT dismiss them lightly
+2. **Your job is to SELECT THE BEST ONE**, not to reject all of them
+3. **Confidence baseline**: Start with the trend confidence (85-95%) and adjust ±10% based on:
+   - Regime alignment (trending regime = +confidence)
+   - Multi-timeframe alignment (all timeframes agree = +confidence)
+   - Sentiment confirmation (sentiment matches direction = +confidence)
+   - Recent performance (if Sharpe >1.0 = +confidence, if Sharpe <0 = -10% only)
+
+4. **If multiple candidates are strong_bearish/bullish**, choose the one with:
+   - Best regime alignment (trending > choppy)
+   - Strongest multi-timeframe alignment
+   - Highest quality rating (excellent > good > acceptable)
+
+5. **DO NOT return HOLD just because performance is negative** - these candidates are PRE-QUALIFIED
+   - Bad recent performance is NOT a reason to skip pre-qualified high-confidence setups
+   - The pre-filter exists specifically to find good opportunities even during drawdowns
 
 ---
 """
@@ -1309,13 +1330,18 @@ prices = [100, 102, 105, 103, 107]
         prompt += """
 Based on all the above data, provide your trading decision in the required JSON format.
 
+**Decision Priority:**
+1. **IF trend_preanalysis exists**: Select the BEST pre-qualified candidate (operation: "open")
+2. **IF no candidates or all are weak**: Only then use "hold"
+
 Remember:
 - Use ALL data sources (technical + sentiment + regime + trend)
+- For PRE-QUALIFIED candidates: Start with trend confidence as baseline (don't arbitrarily lower it)
 - Ensure timeframe alignment before high-conviction trades
 - Set realistic stop-loss and take-profit levels
 - Specify clear, objective invalidation conditions
-- Be honest about confidence levels
 - Consider fee impact on position sizing
+- DO NOT be overly conservative - these candidates passed strict pre-filtering
 
 Your decision:
 """
