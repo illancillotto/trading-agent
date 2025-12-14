@@ -20,6 +20,7 @@ class PerformanceMetrics:
     win_rate: float
     avg_win_pct: float
     avg_loss_pct: float
+    avg_rr: float  # Average Risk-Reward ratio (avg_win / abs(avg_loss))
     max_drawdown_pct: float
     consecutive_losses: int
     total_trades: int
@@ -34,6 +35,7 @@ class PerformanceMetrics:
 - Total Return: {self.total_return_pct:+.2f}%
 - Win Rate: {self.win_rate:.1f}% ({self.profitable_trades}/{self.total_trades} trades)
 - Avg Win: +{self.avg_win_pct:.2f}% | Avg Loss: {self.avg_loss_pct:.2f}%
+- Avg R:R: {self.avg_rr:.2f}:1
 - Max Drawdown: {self.max_drawdown_pct:.2f}%
 - Consecutive Losses: {self.consecutive_losses}"""
 
@@ -88,6 +90,7 @@ class PerformanceCalculator:
                 win_rate=0.0,
                 avg_win_pct=0.0,
                 avg_loss_pct=0.0,
+                avg_rr=0.0,
                 max_drawdown_pct=0.0,
                 consecutive_losses=0,
                 total_trades=0,
@@ -119,6 +122,15 @@ class PerformanceCalculator:
         avg_win = (sum(wins) / len(wins) * 100) if wins else 0
         avg_loss = (sum(losses) / len(losses) * 100) if losses else 0
 
+        # Calculate average risk-reward ratio
+        # avg_rr = avg_win / abs(avg_loss)
+        if avg_loss != 0:
+            avg_rr = avg_win / abs(avg_loss)
+        elif avg_win > 0:
+            avg_rr = 999.0  # Very high R:R if only wins
+        else:
+            avg_rr = 0.0
+
         # Total return
         total_return = sum(returns) * 100
 
@@ -134,6 +146,7 @@ class PerformanceCalculator:
             win_rate=win_rate,
             avg_win_pct=avg_win,
             avg_loss_pct=avg_loss,
+            avg_rr=avg_rr,
             max_drawdown_pct=max_dd,
             consecutive_losses=consec_losses,
             total_trades=len(recent_trades),
@@ -262,7 +275,7 @@ class PerformanceCalculator:
             logger.warning("No db_utils configured, returning empty metrics")
             return PerformanceMetrics(
                 sharpe_ratio=0.0, total_return_pct=0.0, win_rate=0.0,
-                avg_win_pct=0.0, avg_loss_pct=0.0, max_drawdown_pct=0.0,
+                avg_win_pct=0.0, avg_loss_pct=0.0, avg_rr=0.0, max_drawdown_pct=0.0,
                 consecutive_losses=0, total_trades=0, profitable_trades=0
             )
 
@@ -274,7 +287,7 @@ class PerformanceCalculator:
             logger.error(f"Error fetching metrics from DB: {e}", exc_info=True)
             return PerformanceMetrics(
                 sharpe_ratio=0.0, total_return_pct=0.0, win_rate=0.0,
-                avg_win_pct=0.0, avg_loss_pct=0.0, max_drawdown_pct=0.0,
+                avg_win_pct=0.0, avg_loss_pct=0.0, avg_rr=0.0, max_drawdown_pct=0.0,
                 consecutive_losses=0, total_trades=0, profitable_trades=0
             )
 

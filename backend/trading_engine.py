@@ -1060,7 +1060,7 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                             'win_rate': perf_metrics.win_rate if perf_metrics else 0.0,
                             'avg_rr': perf_metrics.avg_rr if perf_metrics else 0.0,
                             'consecutive_losses': risk_manager.consecutive_losses,
-                            'total_return_pct': perf_metrics.total_return if perf_metrics else 0.0
+                            'total_return_pct': perf_metrics.total_return_pct if perf_metrics else 0.0
                         },
                         account_status=account_status,
                         indicators_map=indicators_map,
@@ -1403,7 +1403,7 @@ Consecutive Losses: {risk_manager.consecutive_losses}
                                     'win_rate': perf_metrics.win_rate if perf_metrics else 0.0,
                                     'avg_rr': perf_metrics.avg_rr if perf_metrics else 0.0,
                                     'consecutive_losses': risk_manager.consecutive_losses,
-                                    'total_return_pct': perf_metrics.total_return if perf_metrics else 0.0
+                                    'total_return_pct': perf_metrics.total_return_pct if perf_metrics else 0.0
                                 },
                                 account_status=account_status,
                                 indicators_map=indicators_map,

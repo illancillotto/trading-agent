@@ -349,14 +349,14 @@ class ConfidenceCalibrator:
                 et.duration_minutes,
                 et.exit_reason,
                 et.created_at,
-                bo.confidence,
+                (bo.raw_payload->>'confidence')::NUMERIC as confidence,
                 bo.raw_payload->>'model' as model,
                 bo.raw_payload->>'reason' as ai_reason
             FROM executed_trades et
             LEFT JOIN bot_operations bo ON et.bot_operation_id = bo.id
             WHERE et.status = 'closed'
               AND et.created_at >= NOW() - INTERVAL '%s days'
-              AND bo.confidence IS NOT NULL
+              AND bo.raw_payload->>'confidence' IS NOT NULL
             ORDER BY et.created_at DESC
             """
 
